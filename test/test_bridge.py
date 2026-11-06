@@ -188,6 +188,17 @@ for minute in range(0, 60, 10):
 stat = next(l for l in s.render_history(now=NOON + 3600).splitlines() if l.startswith("s Kyivska")).split("|")
 assert stat[1] == "1" and stat[2] == "115", stat
 
+# A state file from before region details were kept: the first webhook after the upgrade must not clear the rest
+legacy = Path(__file__).parent / "_legacy_state.json"
+legacy.write_text(json.dumps({"zones": {"31": {"level": "yellow", "threats": [], "since": 5, "seq": 3},
+                                        "75": {"level": "red", "threats": ["DRONES"], "since": 6, "seq": 4}}, "seq": 4}))
+try:
+    s = State(str(legacy), R)
+    s.apply_event(event(79, [("Yellow", "")]), NOW)
+    assert {"31", "75", "79"} <= set(s.zones) and s.zones["75"]["level"] == "red" and s.zones["31"]["seq"] == 3
+finally:
+    legacy.unlink(missing_ok=True)
+
 # State survives a restart, including a file written by the Telegram version
 old = Path(__file__).parent / "_old_state.json"
 old.write_text('{"zones": {"Kyiv": {"level": "lost", "threats": ["DRONES"], "seq": 7, "lost_since": 5}}, "seq": 7}')
@@ -201,6 +212,15 @@ try:
     s.apply_poll(POLL, NOW + 100)
     assert s.seq == 8
     assert State(str(old), R).seq == 8
+    # A restart keeps each region's alerts: the first webhook after it adds a zone, it does not clear the others
+    # (that once caused a false all-clear followed by a new siren)
+    s.apply_event(event(75, [("Yellow", "")]), NOW + 110)
+    zones_before, seq_before = dict(s.zones), s.seq
+    s = State(str(old), R)
+    s.apply_event(event(79, [("Yellow", "")]), NOW + 120)
+    assert set(zones_before) < set(s.zones) and {"31", "75", "79"} <= set(s.zones), sorted(s.zones)
+    assert all(s.zones[z]["seq"] == zones_before[z]["seq"] for z in zones_before)   # nothing rings again
+    assert not [e for e in s.events if e["level"] == "none" and e["ts"] == int(NOW + 120)]   # no false all-clear recorded
 finally:
     old.unlink(missing_ok=True)
 

@@ -219,6 +219,11 @@ class State:
             self.zones = {self._key(z): s for z, s in saved["zones"].items() if self._key(z)}
             self.events = [{**e, "zone": self._key(e["zone"])} for e in saved.get("events", []) if self._key(e["zone"])]
             self.sessions = [{**s, "zone": self._key(s["zone"])} for s in saved.get("sessions", []) if self._key(s["zone"])]
+            # What each region has, so the first webhook after a restart adds to the zones instead of replacing them.
+            self.alerts = {r: types for r, types in saved.get("alerts", {}).items() if r in self.regions.zone_of}
+            if "alerts" not in saved:  # a file from before they were kept: each zone stands for itself until the first poll
+                self.alerts = {z: {"AIR": {"level": v["level"], "threats": v.get("threats", []), "since": v.get("since") or int(time.time())}}
+                               for z, v in self.zones.items() if z in self.regions.zone_of}
 
     def _key(self, zone: str) -> str | None:
         """Files before all of Ukraine named Kyiv's zones instead of keeping their ids."""
@@ -290,11 +295,10 @@ class State:
         for zone, s in zones.items():
             was = self.zones.get(zone) or {}
             s["seq"] = self.seq if zone in escalated else was.get("seq", self.seq)
-        changed = zones != self.zones
         self._record(zones, now)
         self.zones = zones
-        if self.path and changed:
-            _atomic_write(self.path, json.dumps({"zones": zones, "seq": self.seq, "events": self.events,
+        if self.path:  # also when only a region's details changed: a restart must find exactly this
+            _atomic_write(self.path, json.dumps({"zones": zones, "alerts": self.alerts, "seq": self.seq, "events": self.events,
                                                  "sessions": self.sessions}), 0o600)
 
     def _record(self, zones: dict, now: float) -> None:
@@ -529,6 +533,7 @@ class Setup:
 
 def poller(state: State, lock: threading.Lock, publish) -> None:
     setup = Setup(state)
+    time.sleep(POLL_SEC)  # the process before a restart may have just polled: an early call only gets 429 Too Many Requests
     while True:
         try:
             if not setup.step():
