@@ -1,0 +1,76 @@
+name: build
+
+# Every push is tested and built. A tag like v1.2.0 also makes a release and updates the web installer;
+# servers pick the release up within an hour (vps/update.sh).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+      - run: pip install platformio cryptography==46.0.3 esptool==4.8.1
+      - name: Tests
+        run: |
+          g++ -std=c++17 -I src test/test_alert.cpp -o test-alert && ./test-alert
+          python test/test_bridge.py
+      - name: Firmware
+        run: |
+          pio run
+          B=.pio/build/stickcplus2
+          mkdir -p out
+          cp $B/firmware.bin out/firmware.bin
+          # One image from offset 0 for the web installer: bootloader, partitions, OTA data, app.
+          python -m esptool --chip esp32 merge_bin -o out/vartovyi-full.bin --flash_mode dio --flash_size 8MB \
+            0x1000 $B/bootloader.bin 0x8000 $B/partitions.bin \
+            0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+            0x10000 $B/firmware.bin
+          tar -C vps -czf out/server.tar.gz peace_bridge.py peace-stick-bridge.service install.sh add-caddy-routes.sh \
+            update.sh vartovyi-update.service vartovyi-update.timer webhook-public.pem
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vartovyi
+          path: out/
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/firmware.bin out/vartovyi-full.bin out/server.tar.gz --generate-notes
+      - name: Web installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir site
+          cp web/index.html out/vartovyi-full.bin site/
+          sed "s/VERSION/$GITHUB_REF_NAME/" web/manifest.json >site/manifest.json
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  pages:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

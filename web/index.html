@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vartovyi</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<style>
+  :root { --bg: #f6f7f9; --fg: #111827; --muted: #5b6472; --card: #fff; --line: #e3e6eb; --accent: #ef2828; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #ecf0f5; --muted: #8a94a2; --card: #1c222b; --line: #343c48; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.55 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 40px 16px; }
+  h1 { font-size: 34px; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 28px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  ol { padding-left: 22px; margin: 0; } li { margin: 6px 0; }
+  esp-web-install-button button[slot=activate] { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 22px; font: 600 17px system-ui; cursor: pointer; }
+  a { color: inherit; }
+  small { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Vartovyi</h1>
+  <p class="lead">Повітряні тривоги Києва та області на M5StickC Plus2. Офіційні дані api.ukrainealarm.com.</p>
+
+  <div class="card">
+    <ol>
+      <li>Підключіть стік до комп'ютера USB-кабелем.</li>
+      <li>Натисніть кнопку нижче (Chrome або Edge на комп'ютері) і виберіть порт стіка.</li>
+      <li>Після прошивки стік покаже QR-код мережі <b>Vartovyi</b>. Відскануйте його телефоном і додайте свій Wi-Fi (2,4 ГГц).</li>
+      <li>Натисніть <b>Close setup</b>, і стік почне показувати тривоги.</li>
+    </ol>
+  </div>
+
+  <esp-web-install-button manifest="manifest.json">
+    <button slot="activate">Прошити стік</button>
+    <span slot="unsupported">Цей браузер не вміє прошивати по USB. Відкрийте сторінку в Chrome або Edge на комп'ютері.</span>
+    <span slot="not-allowed">Сторінка має відкриватися через https.</span>
+  </esp-web-install-button>
+
+  <p><small>Оновлення приходять самі: Settings &gt; Update firmware на стіку. Код і інструкції: <a href="https://github.com/Skerpsh/vartovyi">github.com/Skerpsh/vartovyi</a>.</small></p>
+</main>
+</body>
+</html>

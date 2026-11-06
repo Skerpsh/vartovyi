@@ -1,0 +1,20 @@
+[Unit]
+Description=Pass official air alerts to the M5Stick
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=peace-stick
+EnvironmentFile=/etc/peace-stick/env
+ExecStart=/opt/peace-stick/venv/bin/python /opt/peace-stick/peace_bridge.py
+Restart=always
+RestartSec=5
+StateDirectory=peace-stick
+StateDirectoryMode=0755
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=Install the latest Vartovyi release from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/peace-stick/update.sh
