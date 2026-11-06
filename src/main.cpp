@@ -125,6 +125,7 @@ unsigned long portalUntil = 0, flipSince = 0, lastFlipCheck = 0;
 volatile bool historyWanted = false, portalOn = false, saverNow = false;
 volatile unsigned maskNow = DEFAULT_ZONES;
 volatile bool updateWanted = false;
+bool confirmUpdate = false;  // asking whether to update during an alert
 volatile int updatePercent = -1;
 const char* volatile updateStatus = "";
 bool remindPending = false, trial = false;
@@ -1171,7 +1172,20 @@ void drawRow(int r, const char* left, const char* right, bool onBar, float decod
   drawText(right, canvas.width() - 9, y + 10, middle_right, onBar ? C_BLACK : C_ACCENT);
 }
 
+// Asked when an update is chosen during an alert: the stick hears nothing from the server while it downloads.
+void drawUpdateWarning(Link link) {
+  auto& d = canvas;
+  drawHeader("UPDATE", MI_UPDATE + 1, link);
+  hazard(18, 8, C_YELLOW);
+  drawFitted("ALERT IS ACTIVE", 41, C_YELLOW, 220);
+  drawText("It takes about a minute,", d.width() / 2, 64, middle_center, C_TEXT);
+  drawText("and alerts cannot arrive.", d.width() / 2, 81, middle_center, C_TEXT);
+  drawText("Update anyway?", d.width() / 2, 102, middle_center, C_ACCENT);
+  drawFooter("", "CANCEL", "UPDATE");
+}
+
 void drawMenu(Link link) {
+  if (confirmUpdate) return drawUpdateWarning(link);
   auto& d = canvas;
   const int ROWS = 5;
   int count = menu == M_ZONES ? feed.list.count : menu == M_REGIONS ? regions.count : MI_COUNT;
@@ -1600,7 +1614,7 @@ void activateMenuItem(unsigned long t) {
       glitch(t);
       break;
     case MI_UPDATE:
-      if (view.level != L_NONE) updateStatus = "Not during alert";  // the download pauses the alerts for a while
+      if (view.level != L_NONE) confirmUpdate = true;  // the download pauses the alerts: the user decides
       else updateWanted = true;
       break;
     case MI_TEST: testUntil = t + TEST_MS; break;
@@ -1623,6 +1637,11 @@ void goBack() {
 void handleButtons(bool ok, bool next, bool back, unsigned long t) {
   if (portalOn) {
     if (ok || back) stopPortal();
+    return;
+  }
+  if (confirmUpdate) {  // only M5 goes on; the side button does nothing, so a stray press cannot start it
+    if (ok) updateWanted = true;
+    if (ok || back) confirmUpdate = false, lastDraw = 0;
     return;
   }
   Page wasPage = page;
@@ -1842,6 +1861,7 @@ void loop() {
   if (!portalOn && !isAlarm(sound) && t - lastInput >= BACK_HOME_MS && (page != P_HOME || menu != M_NONE)) {
     page = P_HOME;
     menu = M_NONE;
+    confirmUpdate = false;
     lastDraw = 0;
   }
 
