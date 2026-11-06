@@ -180,6 +180,16 @@ int main() {
   assert(!parseRegions("<html>", rl) && !parseRegions("", rl));
   assert(parseHist("ts 1\n", KYIV_ONLY, h) && !strcmp(h.obl, "14"));
 
+  // A signed file: the signature is the last line and covers everything before it
+  size_t signedLen = 0, sigLen = 0;
+  const char* sig = nullptr;
+  const char* SIGNED = "ts 1\nlevel none\nsig QUJD\n";
+  assert(splitSigned(SIGNED, signedLen, sig, sigLen) && signedLen == 16 && sigLen == 4 && !strncmp(sig, "QUJD", 4));
+  assert(!splitSigned("ts 1\nlevel none\n", signedLen, sig, sigLen));                  // unsigned
+  assert(!splitSigned("ts 1\nsig QUJD\nlevel red\n", signedLen, sig, sigLen));        // something added after it
+  assert(!splitSigned("ts 1\nsig \n", signedLen, sig, sigLen));
+  assert(splitSigned("ts 1\nsig AAAA\nsig QUJD", signedLen, sig, sigLen) && !strncmp(sig, "QUJD", 4) && signedLen == 14);
+
   // Link states
   static Feed good;
   good = Feed{};

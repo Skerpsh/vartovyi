@@ -9,8 +9,8 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "vps"))
-from peace_bridge import (BUNDLED_REGIONS, KYIV, State, Verifier, alert_entry, latin, level_of, load_regions,  # noqa: E402
-                          make_handler, parse_time, threat_of, zone_escalated)
+from peace_bridge import (BUNDLED_REGIONS, KYIV, RejectLog, Signer, State, Verifier, alert_entry, latin, level_of,  # noqa: E402
+                          load_regions, make_handler, parse_time, threat_of, zone_escalated)
 
 NOW = datetime(2026, 9, 7, 15, 40, tzinfo=KYIV).timestamp()
 
@@ -44,6 +44,11 @@ assert e["level"] == "red" and set(e["threats"]) == {"DRONES", "MISSILES"}
 assert alert_entry("AIR", [], NOW)["level"] == "alert"                   # active, with no level given
 assert alert_entry("CHEMICAL", [], NOW) == {"level": "red", "threats": ["CHEMICAL"], "since": int(NOW)}
 assert alert_entry("MARTIANS", [{"alertLevel": "Yellow"}], NOW)["level"] == "unknown"
+
+# Refused webhooks: the first is reported, then at most one summary a minute
+rl = RejectLog()
+assert rl.add(1000) == 1 and all(rl.add(1000 + i) == 0 for i in range(1, 59))
+assert rl.add(1061) == 59 and rl.add(1062) == 0
 
 # The real tree: a community belongs to its raion, a city listed apart to the oblast around it
 assert latin("Київська область") == "Kyivska oblast" and latin("Кам’янець-Подільський") == "Kamianets-Podilskyi"
@@ -232,6 +237,23 @@ future = str(int(NOW) + 301)
 assert not v.check(sign(body, future), future, "rsa-sha256", body, NOW)
 assert not v.check(None, ts, "rsa-sha256", body, NOW) and not v.check("x", None, "", body, NOW)
 assert not v.check("not base64!!", ts, "", body, NOW) and not v.check(sign(body, "abc"), "abc", "", body, NOW)
+
+# Alert files are signed as the stick checks them: everything before the last "sig " line
+from cryptography.exceptions import InvalidSignature  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
+feed_key = ec.generate_private_key(ec.SECP256R1())
+signer = Signer(feed_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+plain = State(regions=R).render("14", NOW)
+signed_text = signer.sign(plain)
+cut = signed_text.rindex("\nsig ") + 1
+assert signed_text[:cut] == plain and signed_text.endswith("\n") and signed_text.count("\nsig ") == 1
+feed_key.public_key().verify(base64.b64decode(signed_text[cut + 4:].strip()), signed_text[:cut].encode(), ec.ECDSA(hashes.SHA256()))
+try:
+    feed_key.public_key().verify(base64.b64decode(signed_text[cut + 4:].strip()), signed_text[:cut].replace("none", "red").encode(),
+                                 ec.ECDSA(hashes.SHA256()))
+    raise AssertionError("a changed file must not verify")
+except InvalidSignature:
+    pass
 
 published = []
 state = State(regions=R)

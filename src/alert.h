@@ -137,6 +137,19 @@ inline void parseZoneLine(const char* s, const char* end, ZoneAlert& z) {
   z.dirSeq = n ? strtol(f, nullptr, 10) : 0;
 }
 
+// The bridge ends each alert file with "sig <base64>", a signature over everything before that line.
+// Finds it; false if it is missing or anything follows it.
+inline bool splitSigned(const char* s, size_t& signedLen, const char*& sig, size_t& sigLen) {
+  const char* at = nullptr;
+  for (const char* p = strstr(s, "\nsig "); p; p = strstr(p + 1, "\nsig ")) at = p;
+  if (!at) return false;
+  signedLen = at - s + 1;
+  sig = at + 5;
+  const char* end = strchr(sig, '\n');
+  sigLen = end ? (size_t)(end - sig) : strlen(sig);
+  return sigLen > 0 && (!end || end[1] == 0);
+}
+
 // Format: one "key value" per line; see vps/peace_bridge.py. False if this is not our file.
 inline bool parseFeed(const char* s, Feed& out) {
   out = Feed{};

@@ -22,6 +22,7 @@ API_KEY = os.environ.get("UA_API_KEY", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://62.238.111.55.nip.io/peace-stick/webhook")
 WEBHOOK_PORT = int(os.environ.get("WEBHOOK_PORT", "8787"))
 PUBLIC_KEY = os.environ.get("WEBHOOK_PUBLIC_KEY", "/etc/peace-stick/webhook-public.pem")
+FEED_KEY = os.environ.get("FEED_KEY", "/etc/peace-stick/feed-key.pem")  # signs every alert file for the sticks
 OUT = os.environ.get("OUT", "/var/lib/peace-stick/alert.txt")
 HISTORY_OUT = os.environ.get("HISTORY_OUT", "/var/lib/peace-stick/history.txt")
 PRIVATE = os.environ.get("PRIVATE_DIR", "/var/lib/peace-stick/private")
@@ -378,6 +379,21 @@ def _atomic_write(path: str, text: str, mode: int) -> None:
     os.replace(tmp, path)  # the web server never serves a half-written file
 
 
+class Signer:
+    """Ends each alert file with "sig <base64 DER ECDSA>" over everything before it. The sticks hold the public half,
+    so a server that only looks like this one, through DNS or a certificate, cannot make them ring or go quiet."""
+
+    def __init__(self, pem: bytes) -> None:
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        self.key = load_pem_private_key(pem, password=None)
+
+    def sign(self, text: str) -> str:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        signature = self.key.sign(text.encode(), ec.ECDSA(hashes.SHA256()))
+        return f"{text}sig {base64.b64encode(signature).decode()}\n"
+
+
 # ---------- webhook ----------
 
 class Verifier:
@@ -412,7 +428,26 @@ class Verifier:
         return True
 
 
-def make_handler(state: State, lock: threading.Lock, verifier: Verifier | None, publish):
+class RejectLog:
+    """The webhook address is public: count refused requests and log at most one line a minute, so nobody can flood the journal."""
+
+    def __init__(self, every: float = 60) -> None:
+        self.every, self.count, self.since = every, 0, 0.0
+        self.lock = threading.Lock()
+
+    def add(self, now: float) -> int:
+        """Counts one; returns how many to report now, or 0 while the minute is still running."""
+        with self.lock:
+            self.count += 1
+            if now - self.since < self.every:
+                return 0
+            reported, self.count, self.since = self.count, 0, now
+            return reported
+
+
+def make_handler(state: State, lock: threading.Lock, verifier: Verifier | None, publish, rejects: RejectLog | None = None):
+    rejects = rejects or RejectLog()
+
     class Webhook(BaseHTTPRequestHandler):
         def do_POST(self):
             try:
@@ -425,7 +460,8 @@ def make_handler(state: State, lock: threading.Lock, verifier: Verifier | None, 
             now = time.time()
             if not verifier or not verifier.check(self.headers.get("X-Webhook-Signature"), self.headers.get("X-Webhook-Timestamp"),
                                                   self.headers.get("X-Webhook-Signature-Alg"), body, now):
-                log.warning("Webhook rejected: bad signature, time or repeat")
+                if n := rejects.add(now):
+                    log.warning("Webhook rejected %d time(s) in the last minute: bad signature, time or repeat", n)
                 return self._answer(401)
             try:
                 message = json.loads(body)
@@ -517,16 +553,24 @@ def main() -> None:
     lock = threading.Lock()
     os.makedirs(OUT_DIR, exist_ok=True)
 
+    try:
+        with open(FEED_KEY, "rb") as f:
+            signer = Signer(f.read())
+    except (OSError, ValueError) as e:  # published unsigned: the first firmware still reads it, newer sticks reject it
+        log.error("No feed key, alert files go out unsigned: %s", e)
+        signer = None
+    sign = signer.sign if signer else (lambda text: text)
+
     def publish(history: bool = True) -> None:
         now = time.time()
-        _atomic_write(os.path.join(OUT_DIR, "regions.txt"), state.regions.listing(), 0o644)
-        _atomic_write(OUT, state.render(COMPAT_GROUP, now), 0o644)
+        _atomic_write(os.path.join(OUT_DIR, "regions.txt"), sign(state.regions.listing()), 0o644)
+        _atomic_write(OUT, sign(state.render(COMPAT_GROUP, now)), 0o644)
         if history:
-            _atomic_write(HISTORY_OUT, state.render_history(COMPAT_GROUP, now), 0o644)
+            _atomic_write(HISTORY_OUT, sign(state.render_history(COMPAT_GROUP, now)), 0o644)
         for group in state.regions.groups:
-            _atomic_write(os.path.join(OUT_DIR, f"{group}.txt"), state.render(group, now), 0o644)
+            _atomic_write(os.path.join(OUT_DIR, f"{group}.txt"), sign(state.render(group, now)), 0o644)
             if history:
-                _atomic_write(os.path.join(OUT_DIR, f"{group}-history.txt"), state.render_history(group, now), 0o644)
+                _atomic_write(os.path.join(OUT_DIR, f"{group}-history.txt"), sign(state.render_history(group, now)), 0o644)
 
     verifier = None
     try:

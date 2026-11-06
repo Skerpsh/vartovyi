@@ -7,6 +7,9 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_ota_ops.h>
+#include <mbedtls/base64.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/sha256.h>
 #include <time.h>
 
 #include "alert.h"
@@ -276,10 +279,40 @@ int fetchText(const char* url, String& body) {
   return code;
 }
 
-// Runs in the fetch task, on request only. The MD5 the server publishes is checked over the whole download.
+// Public keys from keys/, built into the firmware (platformio.ini): the release key signs firmware
+// (sign-release.sh), the feed key is the bridge's and signs every alert file.
+extern const char RELEASE_KEY[] asm("_binary_keys_release_public_pem_start");
+extern const char FEED_KEY[] asm("_binary_keys_feed_public_pem_start");
+
+// True if sigB64, a base64 DER ECDSA signature, signs this SHA-256 with the PEM public key.
+bool signedBy(const char* pem, const uint8_t hash[32], const char* sigB64, size_t sigLen) {
+  uint8_t sig[160];
+  size_t len = 0;
+  if (mbedtls_base64_decode(sig, sizeof sig, &len, (const uint8_t*)sigB64, sigLen)) return false;
+  mbedtls_pk_context pk;
+  mbedtls_pk_init(&pk);
+  bool ok = !mbedtls_pk_parse_public_key(&pk, (const uint8_t*)pem, strlen(pem) + 1) &&
+            !mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, hash, 32, sig, len);
+  mbedtls_pk_free(&pk);
+  return ok;
+}
+
+// A file from the bridge (alerts, history, the oblasts) counts only with its signature: a server that only looks like
+// ours cannot ring, silence, or rewrite what the stick shows.
+bool feedSigned(const String& body) {
+  size_t signedLen = 0, sigLen = 0;
+  const char* sig = nullptr;
+  if (!splitSigned(body.c_str(), signedLen, sig, sigLen)) return false;
+  uint8_t hash[32];
+  mbedtls_sha256_ret((const uint8_t*)body.c_str(), signedLen, hash, 0);
+  return signedBy(FEED_KEY, hash, sig, sigLen);
+}
+
+// Runs in the fetch task, on request only. Installs only an image signed with the release key, so the server
+// alone cannot hand out firmware of its own; the MD5 it publishes only tells whether there is something new.
 void runUpdate() {
   updatePercent = -1;
-  String md5;
+  String md5, sig;
   updateStatus = "Checking";
   int code = fetchText(ALERT_URL "/version", md5);
   md5.trim();
@@ -291,6 +324,11 @@ void runUpdate() {
     updateStatus = "Up to date";
     return;
   }
+  if (fetchText(ALERT_URL "/firmware-sig", sig) != 200) {
+    updateStatus = "Not signed";
+    return;
+  }
+  sig.trim();
   updateStatus = "Downloading";
   if (!http.begin(tls, ALERT_URL "/firmware")) {
     updateStatus = "Failed";
@@ -298,18 +336,39 @@ void runUpdate() {
   }
   code = http.GET();
   int size = http.getSize();
-  bool ok = code == 200 && size > 0 && Update.begin(size);
+  bool ok = code == 200 && size > 0 && Update.begin(size), genuine = false;
   if (ok) {
     Update.setMD5(md5.c_str());
-    Update.onProgress([](size_t done, size_t total) { updatePercent = done * 100 / total; });
-    ok = Update.writeStream(*http.getStreamPtr()) == (size_t)size && Update.end();
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts_ret(&sha, 0);
+    WiFiClient* in = http.getStreamPtr();
+    static uint8_t buf[1024];
+    int done = 0;
+    for (unsigned long last = millis(); ok && done < size && millis() - last < 15000;) {
+      int n = in->read(buf, min((int)sizeof buf, size - done));
+      if (n <= 0) {
+        delay(5);
+        continue;
+      }
+      last = millis();
+      mbedtls_sha256_update_ret(&sha, buf, n);
+      ok = Update.write(buf, n) == (size_t)n;
+      done += n;
+      updatePercent = done * 100LL / size;
+    }
+    uint8_t hash[32];
+    mbedtls_sha256_finish_ret(&sha, hash);
+    mbedtls_sha256_free(&sha);
+    genuine = ok && done == size && signedBy(RELEASE_KEY, hash, sig.c_str(), sig.length());
+    ok = genuine && Update.end();
     if (!ok) Update.abort();
   }
   http.end();
   tls.stop();
   if (!ok) {
-    Serial.printf("update failed: http %d, %s\n", code, Update.errorString());
-    updateStatus = "Failed";
+    Serial.printf("update failed: http %d, genuine %d, %s\n", code, genuine, Update.errorString());
+    updateStatus = code == 200 && !genuine ? "Bad signature" : "Failed";
     updatePercent = -1;
     return;
   }
@@ -340,6 +399,7 @@ void fetchTask(void*) {
       base = String(ALERT_URL "/v2/") + oblastNow;
       xSemaphoreGive(poolLock);
       r.code = fetchText((base + ".txt").c_str(), body);
+      if (r.code == 200 && !feedSigned(body)) r.code = -101;  // not signed by our bridge
       if (r.code == 200 && !parseFeed(body.c_str(), r.feed)) r.code = -100;  // answered, but not our file
       xQueueOverwrite(results, &r);
       if (updateWanted) {
@@ -349,12 +409,13 @@ void fetchTask(void*) {
       if (historyWanted) {
         historyWanted = false;
         h.code = fetchText((base + "-history.txt").c_str(), body);
+        if (h.code == 200 && !feedSigned(body)) h.code = -101;
         if (h.code == 200 && !parseHistory(body.c_str(), maskNow, h.history)) h.code = -100;
         xQueueOverwrite(historyResults, &h);
       }
       if (regionsWanted) {  // once: the list changes only with a new release of the bridge
         static RegionList rl;
-        if (fetchText(ALERT_URL "/v2/regions.txt", body) == 200 && parseRegions(body.c_str(), rl)) {
+        if (fetchText(ALERT_URL "/v2/regions.txt", body) == 200 && feedSigned(body) && parseRegions(body.c_str(), rl)) {
           regionsWanted = false;
           xQueueOverwrite(regionResults, &rl);
         }
