@@ -6,6 +6,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/pk.h>
@@ -1995,11 +1996,23 @@ void handleButtons(bool ok, bool next, bool back, unsigned long t) {
 
 // ---------- main ----------
 
+// Internal RAM is what TLS needs: one connection takes a single block of about 40 KB.
+size_t largestInternal() { return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
+
 void applyResult(const FetchResult& r, unsigned long t) {
+  static int starved = 0;
   if (r.code != 200) {
-    Serial.printf("fetch failed: %d, min heap %u\n", r.code, ESP.getMinFreeHeap());
+    size_t largest = largestInternal();
+    Serial.printf("fetch failed: %d, free %u, largest block %u, min free %u\n", r.code, ESP.getFreeHeap(), largest, ESP.getMinFreeHeap());
+    // Memory too broken up for TLS does not mend by itself: a stick that cannot connect must not just sit there silent.
+    if (r.code < 0 && largest < 45000 && ++starved >= 20) {
+      Serial.println("not enough memory for TLS, restarting");
+      delay(100);
+      ESP.restart();
+    }
     return;
   }
+  starved = 0;
   bool changed = !hasData || feed.seq != r.feed.seq || feed.count != r.feed.count;
   long long now = time(nullptr);
   if (hasData && feed.seq != r.feed.seq && r.feed.msgTs && timeIsSynced(now)) lastDelay = max(0LL, now - r.feed.msgTs);
@@ -2022,8 +2035,10 @@ void setup() {
   M5.Speaker.setVolume(255);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+  canvas.setPsram(psramFound());  // the 65 KB screen buffer in PSRAM leaves internal RAM to TLS
   if (!canvas.createSprite(M5.Display.width(), M5.Display.height())) Serial.println("no memory for the screen buffer");
   loadFonts();
+  Serial.printf("psram %u, free internal %u, largest block %u\n", ESP.getPsramSize(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL), largestInternal());
   poolLock = xSemaphoreCreateMutex();
   loadSettings();
   trial = prefs.getBool("trial", false);
