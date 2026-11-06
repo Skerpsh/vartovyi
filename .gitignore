@@ -2,3 +2,4 @@
 src/secrets.h
 __pycache__/
 .security-audit/
+graphify-out/

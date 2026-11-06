@@ -24,9 +24,10 @@ const unsigned DEFAULT_ZONES = ~0u;  // a new oblast: all of it, until the user 
 
 // The oblast's zones, as the bridge lists them in a fixed order; the user's choice is a bit per position.
 struct ZoneInfo {
-  char name[ZONE_NAME];
-  char label[10];  // short, for the map
-  char kind;       // 'c' a city listed apart, 'r' a raion, 'o' the whole oblast
+  char name[ZONE_NAME];  // Latin: what alert lines and history refer to
+  char label[10];        // short, for the map
+  char kind;             // 'c' a city listed apart, 'r' a raion, 'o' the whole oblast
+  char ua[56], uaLabel[20];  // the same in Ukrainian (UTF-8, two bytes a letter), when the bridge sends them
 };
 struct ZoneList {
   int count;
@@ -102,7 +103,7 @@ inline void nextField(const char*& s, const char* end, const char*& field, size_
   s = bar ? bar + 1 : end;
 }
 
-// Format of a zone list line: name|label|kind
+// Format of a zone list line: name|label|kind|Ukrainian name|Ukrainian label (the last two optional)
 inline void parseZoneInfo(const char* s, const char* end, ZoneList& l) {
   if (l.count >= MAX_ZONES) return;
   ZoneInfo& z = l.zones[l.count++];
@@ -114,6 +115,10 @@ inline void parseZoneInfo(const char* s, const char* end, ZoneList& l) {
   copyValue(z.label, sizeof z.label, f, n);
   nextField(s, end, f, n);
   z.kind = n ? *f : 'r';
+  nextField(s, end, f, n);
+  copyValue(z.ua, sizeof z.ua, f, n);
+  nextField(s, end, f, n);
+  copyValue(z.uaLabel, sizeof z.uaLabel, f, n);
 }
 
 inline void parseZoneLine(const char* s, const char* end, ZoneAlert& z) {
@@ -372,13 +377,14 @@ const int MAX_REGIONS = 32;
 struct Region {
   char id[REGION_ID];
   char name[ZONE_NAME];
+  char ua[40];  // Ukrainian, when the bridge sends it
 };
 struct RegionList {
   int count;
   Region regions[MAX_REGIONS];
 };
 
-// Format: "r id|name" per line, in the order to show them.
+// Format: "r id|name|Ukrainian name" per line, in the order to show them.
 inline bool parseRegions(const char* s, RegionList& out) {
   out = RegionList{};
   while (s && *s) {
@@ -393,6 +399,8 @@ inline bool parseRegions(const char* s, RegionList& out) {
       copyValue(r.id, sizeof r.id, f, n);
       nextField(val, stop, f, n);
       copyValue(r.name, sizeof r.name, f, n);
+      nextField(val, stop, f, n);
+      copyValue(r.ua, sizeof r.ua, f, n);
     }
     s = end ? end + 1 : nullptr;
   }
@@ -519,11 +527,6 @@ inline bool updateUsb(bool wasUsb, int batteryMv) {
 inline void formatTimer(long long seconds, char* out, size_t size) {
   if (seconds < 0) seconds = 0;
   snprintf(out, size, "%02lld:%02lld:%02lld", seconds / 3600, seconds / 60 % 60, seconds % 60);
-}
-
-inline void formatMinutes(int minutes, char* out, size_t size) {
-  if (minutes < 60) snprintf(out, size, "%dm", minutes);
-  else snprintf(out, size, "%dh %02dm", minutes / 60, minutes % 60);
 }
 
 // Back and forth through a list, wrapping around.

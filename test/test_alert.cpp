@@ -173,10 +173,15 @@ int main() {
   for (int i = 0; i < MAX_EVENTS + 9; i++) longHist += "h 5|Kyiv|red|\n";
   assert(parseHist(longHist.c_str(), KYIV_ONLY, h) && h.eventCount == MAX_EVENTS);
 
+  // Ukrainian names travel as extra fields; a list without them still parses
+  assert(parseFeed("ts 1\nlevel none\nobl 14\nn Kyiv|KYIV|c|Київ|КИЇВ\n", f) && !strcmp(f.list.zones[0].ua, "Київ") && !strcmp(f.list.zones[0].uaLabel, "КИЇВ"));
+  assert(!strcmp(K.zones[0].ua, ""));
+
   // The list of oblasts
   static RegionList rl;
   assert(parseRegions("r 24|Cherkaska\nr 14|Kyivska\nr 9999|Krym\n", rl) && rl.count == 3);
-  assert(!strcmp(rl.regions[1].id, "14") && !strcmp(rl.regions[1].name, "Kyivska"));
+  assert(!strcmp(rl.regions[1].id, "14") && !strcmp(rl.regions[1].name, "Kyivska") && !rl.regions[1].ua[0]);
+  assert(parseRegions("r 14|Kyivska|Київська\n", rl) && !strcmp(rl.regions[0].ua, "Київська"));
   assert(!parseRegions("<html>", rl) && !parseRegions("", rl));
   assert(parseHist("ts 1\n", KYIV_ONLY, h) && !strcmp(h.obl, "14"));
 
@@ -311,10 +316,6 @@ int main() {
   assert(!strcmp(text, "00:00:00"));
   formatTimer(360000, text, sizeof text);
   assert(!strcmp(text, "100:00:00"));
-  formatMinutes(45, text, sizeof text);
-  assert(!strcmp(text, "45m"));
-  formatMinutes(95, text, sizeof text);
-  assert(!strcmp(text, "1h 35m"));
 
   assert(stepIndex(0, 6, -1) == 5 && stepIndex(5, 6, 1) == 0 && stepIndex(2, 6, 1) == 3 && stepIndex(0, 0, 1) == 0);
 

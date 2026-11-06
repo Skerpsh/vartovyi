@@ -43,7 +43,7 @@ const int BEEP_CYCLES = 6;                // drones do not ring forever, a missi
 const int LOW_BATTERY = 10;
 const int MAX_NETS = 8;
 const uint8_t LED_PIN = 19;               // the red LED on the Plus2, shared with the IR transmitter
-const uint8_t BRIGHT_SAVER = 40, BRIGHT_ACTIVE = 160, BRIGHT_ALARM = 255;
+const uint8_t BRIGHT_ACTIVE = 160, BRIGHT_ALARM = 255;
 const char* const AP_NAME = "Vartovyi";
 
 constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
@@ -82,11 +82,13 @@ const Step BALLISTIC[] = {{3700, 110}, {2300, 110}};
 
 enum Page { P_HOME, P_MAP, P_DETAILS, P_HISTORY, P_STATS, P_SYSTEM, PAGE_COUNT };
 enum Menu { M_NONE, M_MAIN, M_ZONES, M_REGIONS };
-enum MenuItem { MI_REGION, MI_ZONES, MI_THEME, MI_IMPACT, MI_VOLUME, MI_BRIGHT, MI_NIGHT, MI_FLIP, MI_POWER, MI_TEST, MI_SETUP, MI_UPDATE, MI_COUNT };
+enum MenuItem { MI_LANG, MI_REGION, MI_ZONES, MI_THEME, MI_IMPACT, MI_VOLUME, MI_BRIGHT, MI_NIGHT, MI_FLIP, MI_POWER, MI_TEST, MI_SETUP, MI_UPDATE, MI_COUNT };
 enum PowerMode { POWER_AUTO, POWER_NORMAL, POWER_SAVER };
 
 struct Settings {
   char oblast[REGION_ID] = "14", oblastName[ZONE_NAME] = "Kyivska";  // Kyiv, where the first firmware lived
+  char oblastUa[40] = "Київська";
+  int lang = 0;  // LANG_UA: the firmware speaks Ukrainian unless the user picks English
   unsigned zones = DEFAULT_ZONES;
   int theme = 0;
   int impact = 1;  // knocks break the screen for a moment: 0 off, 1 hits and drops, 2 also swings
@@ -149,6 +151,227 @@ bool timeIsSynced(long long now) { return now > 1700000000; }  // TLS cannot che
 bool due(unsigned long until, unsigned long t) { return until && (long)(until - t) > 0; }
 bool isAlarm(Sound s) { return s == S_SIREN || s == S_BALLISTIC || s == S_BEEPS || s == S_LINK; }
 
+// ---------- language ----------
+// The interface is written in English; Ukrainian comes from this table, and zone and oblast names from the bridge.
+// The boot screen draws with drawRaw() and stays English.
+enum Lang { LANG_UA, LANG_EN };
+
+const char* T(const char* en) {
+  static const struct {
+    const char *en, *ua;
+  } PHRASES[] = {
+    {"HOME", "ГОЛОВНА"},
+    {"MAP", "КАРТА"},
+    {"ACTIVE", "АКТИВНІ"},
+    {"HISTORY", "ІСТОРІЯ"},
+    {"STATS", "СТАТИСТИКА"},
+    {"SYSTEM", "СИСТЕМА"},
+    {"MENU", "МЕНЮ"},
+    {"ZONES", "РАЙОНИ"},
+    {"OBLAST", "ОБЛАСТЬ"},
+    {"FIRMWARE", "ПРОШИВКА"},
+    {"NEXT", "ДАЛІ"},
+    {"BACK", "НАЗАД"},
+    {"SET", "ЗМІНИТИ"},
+    {"OPEN", "ВІДКРИТИ"},
+    {"RUN", "ЗАПУСК"},
+    {"TOGGLE", "ЗМІНИТИ"},
+    {"CHOOSE", "ОБРАТИ"},
+    {"NEXT THEME", "ЗМІНИТИ"},
+    {"CANCEL", "СКАСУВАТИ"},
+    {"UPDATE", "ОНОВИТИ"},
+    {"Oblast", "Область"},
+    {"Zones", "Райони"},
+    {"Theme", "Тема"},
+    {"Impact FX", "Ефекти удару"},
+    {"Volume", "Гучність"},
+    {"Brightness", "Яскравість"},
+    {"Night mode", "Нічний режим"},
+    {"Flip to silence", "Тиша переворотом"},
+    {"Power", "Живлення"},
+    {"Test alarm", "Тест сирени"},
+    {"Phone setup", "Налаштування"},
+    {"Update firmware", "Оновлення"},
+    {"On", "Увімк"},
+    {"Off", "Вимк"},
+    {"Auto", "Авто"},
+    {"Normal", "Звичайне"},
+    {"Saver", "Економ"},
+    {"Low", "Низька"},
+    {"Medium", "Середня"},
+    {"High", "Висока"},
+    {"Orange", "Помаранч"},
+    {"Cyan", "Ціан"},
+    {"Magenta", "Пурпур"},
+    {"Violet", "Фіолет"},
+    {"Blue", "Синій"},
+    {"Ice", "Лід"},
+    {"%d of %d", "%d з %d"},
+    {"Checking", "Перевірка"},
+    {"None published", "Немає"},
+    {"Bad signature", "Хибний підпис"},
+    {"Up to date", "Актуальна"},
+    {"Downloading", "Завантаження"},
+    {"Failed", "Помилка"},
+    {"Bad image", "Хибний образ"},
+    {"NO WI-FI", "НЕМАЄ WI-FI"},
+    {"SERVER SILENT", "СЕРВЕР МОВЧИТЬ"},
+    {"BRIDGE DOWN", "МІСТ НЕ ПРАЦЮЄ"},
+    {"API SILENT", "API МОВЧИТЬ"},
+    {"UNCONFIRMED", "НЕПІДТВЕРДЖЕНО"},
+    {"CHECK ALERTS", "ПЕРЕВІРТЕ ТРИВОГИ"},
+    {"BALLISTIC", "БАЛІСТИКА"},
+    {"MISSILE ALERT", "РАКЕТИ"},
+    {"AIRCRAFT ALERT", "АВІАЦІЯ"},
+    {"RED ALERT", "ЧЕРВОНА ТРИВОГА"},
+    {"DRONE ALERT", "ЗАГРОЗА БПЛА"},
+    {"YELLOW ALERT", "ЖОВТА ТРИВОГА"},
+    {"AIR ALERT", "ПОВІТРЯНА ТРИВОГА"},
+    {"CRUISE", "КРИЛАТІ РАКЕТИ"},
+    {"MISSILES", "РАКЕТИ"},
+    {"AIRCRAFT", "АВІАЦІЯ"},
+    {"DRONES", "БПЛА"},
+    {"ARTILLERY", "АРТИЛЕРІЯ"},
+    {"URBAN_FIGHTS", "ВУЛИЧНІ БОЇ"},
+    {"CHEMICAL", "ХІМІЧНА"},
+    {"NUCLEAR", "РАДІАЦІЙНА"},
+    {"ALL CLEAR", "ТРИВОГИ НЕМАЄ"},
+    {"ALL-CLEAR", "ВІДБІЙ"},
+    {"THREAT ENDED // STAND DOWN", "ЗАГРОЗУ ЗНЯТО"},
+    {"LINKING", "З’ЄДНАННЯ"},
+    {"ALERTS MAY BE MISSED", "МОЖНА ПРОПУСТИТИ ТРИВОГУ"},
+    {"wi-fi up, reaching the server", "wi-fi є, шукаю сервер"},
+    {"searching for wi-fi", "шукаю wi-fi"},
+    {"%s // LAST KNOWN STATE", "%s // ОСТАННІ ДАНІ"},
+    {"%s: may still be active", "%s: може ще тривати"},
+    {"OBL %s  //  WATCH %s  //  NET %s %ddBm  //  SEQ %ld  //  %s  //  ", "ОБЛ %s  //  СТЕЖУ %s  //  МЕРЕЖА %s %ddBm  //  ПОДІЯ %ld  //  %s  //  "},
+    {"NIGHT MODE", "НІЧНИЙ РЕЖИМ"},
+    {"SAVER", "ЕКОНОМ"},
+    {"VER", "ВЕРСІЯ"},
+    {"%d of %d zones", "%d з %d районів"},
+    {"LOADING", "ЗАВАНТАЖЕННЯ"},
+    {"%d ACTIVE", "%d АКТИВНИХ"},
+    {"NO THREATS", "ЗАГРОЗ НЕМАЄ"},
+    {"in the zones you watch", "у ваших районах"},
+    {"threat not specified", "загрозу не вказано"},
+    {"NO DATA", "НЕМАЄ ДАНИХ"},
+    {"NO EVENTS", "ПОДІЙ НЕМАЄ"},
+    {"QUIET WEEK", "ТИХИЙ ТИЖДЕНЬ"},
+    {"TODAY %d / %s", "СЬОГОДНІ %d / %s"},
+    {"WEEK %d / %s", "ТИЖДЕНЬ %d / %s"},
+    {"NET", "МЕРЕЖА"},
+    {"LINK", "ЗВ’ЯЗОК"},
+    {"DELAY", "ЗАТРИМКА"},
+    {"POWER", "ЖИВЛЕННЯ"},
+    {"offline", "немає"},
+    {"nominal", "норма"},
+    {"connecting", "з’єднання"},
+    {"%ld s, last alert", "%ld с, остання тривога"},
+    {"not measured yet", "ще не виміряно"},
+    {"battery", "батарея"},
+    {", saver", ", економ"},
+    {"%s, up %lum", "%s, працює %lu хв"},
+    {"ALARM TEST", "ТЕСТ СИРЕНИ"},
+    {"This is a test", "Це перевірка"},
+    {"Alerts may be missed", "Тривогу можна пропустити"},
+    {"ANY KEY = SILENCE", "БУДЬ-ЯКА КНОПКА = ТИША"},
+    {"ALERT IS ACTIVE", "ТРИВОГА ТРИВАЄ"},
+    {"It takes about a minute,", "Це займе близько хвилини,"},
+    {"and alerts cannot arrive.", "тривоги тим часом не надходять."},
+    {"Update anyway?", "Все одно оновити?"},
+    {"SETUP", "НАЛАШТУВАННЯ"},
+    {"phone joined", "підключено"},
+    {"scan again or", "скануйте знову"},
+    {"open", "або відкрийте"},
+    {"scan with", "скануйте"},
+    {"the camera", "камерою"},
+    {"M5 / BACK: EXIT", "M5 / НАЗАД: ВИХІД"},
+    {"IMPACT DETECTED", "УДАР ВИЯВЛЕНО"},
+    {"RECALIBRATING%.*s", "КАЛІБРУВАННЯ%.*s"},
+    {"%dm", "%d хв"},
+    {"%dh %02dm", "%d год %02d хв"},
+    {"Wi-Fi networks", "Мережі Wi-Fi"},
+    {"The stick joins the first one in range, top to bottom.", "Стік підключається до першої доступної мережі, згори донизу."},
+    {"Up", "Вгору"},
+    {"Remove", "Видалити"},
+    {"The list is full. Remove a network to add another.", "Список повний. Видаліть мережу, щоб додати іншу."},
+    {"Network name", "Назва мережі"},
+    {"Password", "Пароль"},
+    {"Add network", "Додати мережу"},
+    {"iPhone hotspot: turn on Maximize Compatibility, and keep the Personal Hotspot screen open while the stick connects.", "Хотспот iPhone: увімкніть «Максимальна сумісність» і тримайте екран «Режим модема» відкритим, поки стік підключається."},
+    {"Save oblast", "Зберегти область"},
+    {"Alert zones", "Райони тривог"},
+    {"Loading the zones of this oblast: reload the page in a few seconds.", "Райони цієї області завантажуються: оновіть сторінку за кілька секунд."},
+    {"Watching any raion also includes alerts for the whole oblast.", "Якщо стежите хоча б за одним районом, тривоги на всю область теж рахуються."},
+    {"Save zones", "Зберегти райони"},
+    {"Drones beep once at night. Missiles always ring.", "Вночі дрони — один гудок. Ракети — завжди сирена."},
+    {"Save night mode", "Зберегти нічний режим"},
+    {"Display and sound", "Екран і звук"},
+    {"Screen brightness", "Яскравість екрана"},
+    {"Volume of drones and all-clear (missiles are always at maximum)", "Гучність дронів і відбою (ракети завжди на максимумі)"},
+    {"Save", "Зберегти"},
+    {"Close setup", "Закрити налаштування"},
+    {"Setup closed. You can leave this network.", "Налаштування закрито. Можна відключитися від цієї мережі."},
+    {"Network name must be 1-32 characters.", "Назва мережі: від 1 до 32 символів."},
+    {"Password must be 8-63 characters, or empty for an open network.", "Пароль: від 8 до 63 символів, або порожній для відкритої мережі."},
+    {"Saved %s.", "Збережено %s."},
+    {"The list is full.", "Список повний."},
+    {"Network list updated.", "Список мереж оновлено."},
+    {"Keep at least one zone, or the stick would never ring.", "Залиште хоча б один район, інакше стік ніколи не задзвонить."},
+    {"Zones saved.", "Райони збережено."},
+    {"Hours must be 0-23.", "Години: від 0 до 23."},
+    {"Night mode saved.", "Нічний режим збережено."},
+    {"Unknown value.", "Невідоме значення."},
+    {"Display and sound saved.", "Екран і звук збережено."},
+    {"Oblast saved. Its zones appear below in a few seconds: reload the page.", "Область збережено. Її райони з’являться нижче за кілька секунд: оновіть сторінку."},
+    {"Unknown oblast.", "Невідома область."},
+  };
+  if (cfg.lang != LANG_UA || !en || !*en) return en;
+  for (auto& p : PHRASES)
+    if (!strcmp(p.en, en)) return p.ua;
+  for (int i = 0; i < feed.list.count; i++)
+    if (!strcmp(feed.list.zones[i].name, en) && feed.list.zones[i].ua[0]) return feed.list.zones[i].ua;
+  for (int i = 0; i < regions.count; i++)
+    if (!strcmp(regions.regions[i].name, en) && regions.regions[i].ua[0]) return regions.regions[i].ua;
+  if (!strcmp(en, cfg.oblastName) && cfg.oblastUa[0]) return cfg.oblastUa;
+  return en;
+}
+
+// A comma list of threats ("BALLISTIC,DRONES" or "BALLISTIC, DRONES"), each word in the interface language.
+const char* threatsText(const char* list, char* out, size_t size) {
+  out[0] = 0;
+  while (list && *list) {
+    while (*list == ' ' || *list == ',') list++;
+    const char* end = list;
+    while (*end && *end != ',') end++;
+    char one[24];
+    copyValue(one, sizeof one, list, end - list);
+    if (one[0]) snprintf(out + strlen(out), size - strlen(out), "%s%s", out[0] ? ", " : "", T(one));
+    list = end;
+  }
+  return out;
+}
+
+// Minutes as "45m" / "1h 35m", in the interface language.
+const char* minutesText(int minutes, char* out, size_t size) {
+  if (minutes < 60) snprintf(out, size, T("%dm"), minutes);
+  else snprintf(out, size, T("%dh %02dm"), minutes / 60, minutes % 60);
+  return out;
+}
+
+// A view's zone line ("Buchanskyi +2", "Fastivskyi to Kyiv") with the zone in the interface language.
+const char* zoneText(const char* line, char* out, size_t size) {
+  for (int i = 0; i < feed.list.count; i++) {
+    size_t n = strlen(feed.list.zones[i].name);
+    if (n && !strncmp(line, feed.list.zones[i].name, n) && (line[n] == 0 || line[n] == ' ')) {
+      snprintf(out, size, "%s%s", T(feed.list.zones[i].name), line + n);
+      return out;
+    }
+  }
+  snprintf(out, size, "%s", T(line));
+  return out;
+}
+
 // ---------- settings ----------
 
 // Everything but the accent is the accent mixed with black, grey or white, so any theme stays one family.
@@ -188,6 +411,8 @@ void shareOblast() {
 void saveSettings() {
   prefs.putString("obl", cfg.oblast);
   prefs.putString("oblName", cfg.oblastName);
+  prefs.putString("oblUa", cfg.oblastUa);
+  prefs.putInt("lang", cfg.lang);
   shareOblast();
   prefs.putUInt("zones", cfg.zones);
   prefs.putBool("night", cfg.nightOn);
@@ -206,6 +431,9 @@ void loadSettings() {
   prefs.begin("peace", false);
   prefs.getString("obl", cfg.oblast, sizeof cfg.oblast);  // an older firmware saved none: Kyiv stays
   prefs.getString("oblName", cfg.oblastName, sizeof cfg.oblastName);
+  // Firmware before the Ukrainian names kept none: "Київська" fits only Kyiv; others wait for the server's list.
+  if (!prefs.getString("oblUa", cfg.oblastUa, sizeof cfg.oblastUa) && strcmp(cfg.oblast, "14")) cfg.oblastUa[0] = 0;
+  cfg.lang = constrain(prefs.getInt("lang", 0), 0, 1);
   shareOblast();
   cfg.zones = prefs.getUInt("zones", DEFAULT_ZONES);
   cfg.nightOn = prefs.getBool("night", true);
@@ -449,7 +677,7 @@ String htmlEscape(const String& s) {
 String setupPage(const String& message) {
   String h;
   h.reserve(5000);
-  h += F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Vartovyi</title><style>"
+  h += F("<!doctype html><html lang=uk><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Vartovyi</title><style>"
          "body{margin:0;background:#050507;color:#ffeed6;font:16px ui-monospace,Menlo,Consolas,monospace;padding:16px;max-width:560px}"
          "h1{font-size:22px;margin:4px 0 16px;color:#ff9c00;letter-spacing:.1em}h2{font-size:15px;color:#ff9c00;text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px}"
          "section{background:#1e1306;border-left:3px solid #ff9c00;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%);padding:14px;margin:0 0 14px}"
@@ -461,61 +689,61 @@ String setupPage(const String& message) {
          "</style></head><body><h1>Vartovyi</h1>");
   if (message.length()) h += "<p class=msg>" + htmlEscape(message) + "</p>";
 
-  h += F("<section><h2>Wi-Fi networks</h2><p class=tip>The stick joins the first one in range, top to bottom.</p>");
+  h += String("<section><h2>") + T("Wi-Fi networks") + "</h2><p class=tip>" + T("The stick joins the first one in range, top to bottom.") + "</p>";
   xSemaphoreTake(poolLock, portMAX_DELAY);
   for (int i = 0; i < poolCount; i++) {
     h += "<form class=row method=post action=/net><input type=hidden name=i value=" + String(i) + "><span>" + htmlEscape(pool[i].ssid) + "</span>";
-    if (i) h += F("<button class=s name=do value=up>Up</button>");
-    if (poolCount > 1) h += F("<button class=s name=do value=del>Remove</button>");
+    if (i) h += String("<button class=s name=do value=up>") + T("Up") + "</button>";
+    if (poolCount > 1) h += String("<button class=s name=do value=del>") + T("Remove") + "</button>";
     h += F("</form>");
   }
   bool full = poolCount >= MAX_NETS;
   xSemaphoreGive(poolLock);
   if (full) {
-    h += F("<p class=tip>The list is full. Remove a network to add another.</p>");
+    h += String("<p class=tip>") + T("The list is full. Remove a network to add another.") + "</p>";
   } else {
-    h += F("<form method=post action=/add style='margin-top:12px'><input type=text name=ssid maxlength=32 list=near placeholder='Network name' autocapitalize=off autocorrect=off required>"
-           "<datalist id=near>");
+    h += String("<form method=post action=/add style='margin-top:12px'><input type=text name=ssid maxlength=32 list=near placeholder='") +
+         T("Network name") + "' autocapitalize=off autocorrect=off required><datalist id=near>";
     for (int i = 0; i < nearbyCount; i++) h += "<option value=\"" + htmlEscape(nearby[i]) + "\">";
-    h += F("</datalist><input type=password name=pass maxlength=63 placeholder='Password'><button>Add network</button></form>"
-           "<p class=tip>iPhone hotspot: turn on Maximize Compatibility, and keep the Personal Hotspot screen open while the stick connects.</p>");
+    h += String("</datalist><input type=password name=pass maxlength=63 placeholder='") + T("Password") + "'><button>" + T("Add network") +
+         "</button></form><p class=tip>" +
+         T("iPhone hotspot: turn on Maximize Compatibility, and keep the Personal Hotspot screen open while the stick connects.") + "</p>";
   }
-  h += F("</section><section><h2>Oblast</h2><form method=post action=/region><select name=r aria-label=Oblast>");
-  if (!regions.count) h += "<option value=" + String(cfg.oblast) + ">" + htmlEscape(cfg.oblastName) + "</option>";
+  h += String("</section><section><h2>") + T("Oblast") + "</h2><form method=post action=/region><select name=r aria-label=Oblast>";
+  if (!regions.count) h += "<option value=" + String(cfg.oblast) + ">" + htmlEscape(T(cfg.oblastName)) + "</option>";
   for (int i = 0; i < regions.count; i++) {
     const Region& r = regions.regions[i];
-    h += "<option value=" + String(r.id) + (strcmp(r.id, cfg.oblast) ? ">" : " selected>") + htmlEscape(r.name) + "</option>";
+    h += "<option value=" + String(r.id) + (strcmp(r.id, cfg.oblast) ? ">" : " selected>") + htmlEscape(T(r.name)) + "</option>";
   }
-  h += F("</select><button>Save oblast</button></form></section><section><h2>Alert zones</h2><form method=post action=/zones>");
-  if (!feed.list.count) h += F("<p class=tip>Loading the zones of this oblast: reload the page in a few seconds.</p>");
+  h += String("</select><button>") + T("Save oblast") + "</button></form></section><section><h2>" + T("Alert zones") +
+       "</h2><form method=post action=/zones>";
+  if (!feed.list.count) h += String("<p class=tip>") + T("Loading the zones of this oblast: reload the page in a few seconds.") + "</p>";
   for (int i = 0; i < feed.list.count; i++) {
-    h += "<label><input type=checkbox name=z" + String(i) + (cfg.zones & (1u << i) ? " checked>" : ">") + htmlEscape(feed.list.zones[i].name) + "</label>";
+    h += "<label><input type=checkbox name=z" + String(i) + (cfg.zones & (1u << i) ? " checked>" : ">") + htmlEscape(T(feed.list.zones[i].name)) + "</label>";
   }
-  h += F("<p class=tip>Watching any raion also includes alerts for the whole oblast.</p><button>Save zones</button></form></section>"
-         "<section><h2>Night mode</h2><form method=post action=/night><label><input type=checkbox name=on");
+  h += String("<p class=tip>") + T("Watching any raion also includes alerts for the whole oblast.") + "</p><button>" + T("Save zones") +
+       "</button></form></section><section><h2>" + T("Night mode") + "</h2><form method=post action=/night><label><input type=checkbox name=on";
   if (cfg.nightOn) h += F(" checked");
-  h += F(">Drones beep once at night. Missiles always ring.</label><div class=times><input type=number name=start min=0 max=23 aria-label='Start hour' value=");
-  h += String(cfg.nightStart);
-  h += F("><input type=number name=end min=0 max=23 aria-label='End hour' value=");
-  h += String(cfg.nightEnd);
-  h += F("></div><button>Save night mode</button></form></section>"
-         "<section><h2>Display and sound</h2><form method=post action=/display>");
+  h += String(">") + T("Drones beep once at night. Missiles always ring.") +
+       "</label><div class=times><input type=number name=start min=0 max=23 aria-label='Start hour' value=" + String(cfg.nightStart) +
+       "><input type=number name=end min=0 max=23 aria-label='End hour' value=" + String(cfg.nightEnd) + "></div><button>" +
+       T("Save night mode") + "</button></form></section><section><h2>" + T("Display and sound") + "</h2><form method=post action=/display>";
   const char* const NAMES[] = {"bright", "volume"};
   const char* const LABELS[] = {"Screen brightness", "Volume of drones and all-clear (missiles are always at maximum)"};
   const int VALUES[] = {cfg.bright, cfg.volume};
   for (int k = 0; k < 2; k++) {
-    h += String("<label for=") + NAMES[k] + ">" + LABELS[k] + "</label><select id=" + NAMES[k] + " name=" + NAMES[k] + ">";
-    for (int i = 0; i < 3; i++) h += "<option value=" + String(i) + (VALUES[k] == i ? " selected>" : ">") + LEVEL_NAMES[i] + "</option>";
+    h += String("<label for=") + NAMES[k] + ">" + T(LABELS[k]) + "</label><select id=" + NAMES[k] + " name=" + NAMES[k] + ">";
+    for (int i = 0; i < 3; i++) h += "<option value=" + String(i) + (VALUES[k] == i ? " selected>" : ">") + T(LEVEL_NAMES[i]) + "</option>";
     h += F("</select>");
   }
-  h += F("<button>Save</button></form></section>"
-         "<form method=post action=/done><button class=s>Close setup</button></form><p class=tip>Vartovyi " VERSION "</p></body></html>");
+  h += String("<button>") + T("Save") + "</button></form></section><form method=post action=/done><button class=s>" + T("Close setup") +
+       "</button></form><p class=tip>Vartovyi " VERSION "</p></body></html>";
   for (int i = 0; i < 5; i++) h.replace(PAGE_COLORS[i], themeHex[i]);  // the page is written in the orange theme
   return h;
 }
 
 void showPage(const String& message) {
-  server.send(200, "text/html; charset=utf-8", setupPage(message));
+  server.send(200, "text/html; charset=utf-8", setupPage(T(message.c_str())));
   portalUntil = millis() + PORTAL_MS;
 }
 
@@ -535,7 +763,9 @@ void addNetwork() {
     savePool();
   }
   xSemaphoreGive(poolLock);
-  showPage(room ? "Saved " + ssid + "." : "The list is full.");
+  char saved[64];
+  snprintf(saved, sizeof saved, T("Saved %s."), ssid.c_str());
+  showPage(room ? String(saved) : String("The list is full."));
 }
 
 void changeNetwork() {
@@ -561,6 +791,7 @@ void chooseOblast(const Region& r) {
   if (!strcmp(r.id, cfg.oblast)) return;
   strcpy(cfg.oblast, r.id);
   strcpy(cfg.oblastName, r.name);
+  strcpy(cfg.oblastUa, r.ua);
   cfg.zones = DEFAULT_ZONES;
   saveSettings();
   feed = Feed{};  // the old oblast's zones and choices mean nothing here
@@ -618,7 +849,7 @@ void setupRoutes() {
   server.on("/region", HTTP_POST, saveRegion);
   server.on("/night", HTTP_POST, saveNight);
   server.on("/done", HTTP_POST, [] {
-    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=viewport content='width=device-width'><body style='background:#050507;color:" + String(themeHex[0]) + ";font:18px ui-monospace,monospace;padding:24px'>Setup closed. You can leave this network.");
+    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=viewport content='width=device-width'><body style='background:#050507;color:" + String(themeHex[0]) + ";font:18px ui-monospace,monospace;padding:24px'>" + String(T("Setup closed. You can leave this network.")));
     portalStopRequested = true;
   });
   // Any other address, like the iPhone's captive portal check, leads to the page, so it opens by itself.
@@ -713,7 +944,27 @@ void hazard(int y, int h, uint16_t color) {
   }
 }
 
-void drawText(const char* text, int x, int y, uint8_t datum, uint16_t color, const lgfx::IFont* font = &fonts::Font2) {
+// Tektur, the one interface font, in the sizes tools/make-fonts.py builds; only the logo keeps Orbitron.
+extern const uint8_t VLW_T11[] asm("_binary_fonts_t11_vlw_start");
+extern const uint8_t VLW_T14[] asm("_binary_fonts_t14_vlw_start");
+extern const uint8_t VLW_T18[] asm("_binary_fonts_t18_vlw_start");
+extern const uint8_t VLW_T24[] asm("_binary_fonts_t24_vlw_start");
+extern const uint8_t VLW_T32[] asm("_binary_fonts_t32_vlw_start");
+extern const uint8_t VLW_T44[] asm("_binary_fonts_t44_vlw_start");
+lgfx::VLWfont T11, T14, T18, T24, T32, T44;
+
+void loadFonts() {
+  static lgfx::PointerWrapper data[6];
+  const uint8_t* const SRC[] = {VLW_T11, VLW_T14, VLW_T18, VLW_T24, VLW_T32, VLW_T44};
+  lgfx::VLWfont* const FONT[] = {&T11, &T14, &T18, &T24, &T32, &T44};
+  for (int i = 0; i < 6; i++) {
+    data[i].set(SRC[i]);
+    if (!FONT[i]->loadFont(&data[i])) Serial.printf("font %d did not load\n", i);
+  }
+}
+
+// Draws text as it is: the boot screen is always in English.
+void drawRaw(const char* text, int x, int y, uint8_t datum, uint16_t color, const lgfx::IFont* font = &T14) {
   canvas.setFont(font);
   canvas.setTextSize(1);
   canvas.setTextDatum(datum);
@@ -721,33 +972,53 @@ void drawText(const char* text, int x, int y, uint8_t datum, uint16_t color, con
   canvas.drawString(text, x, y);
 }
 
-void drawSmall(const char* text, int x, int y, uint8_t datum, uint16_t color) { drawText(text, x, y, datum, color); }
-
-void drawClipped(const char* text, int x, int y, int width, uint16_t color) {
-  canvas.setClipRect(x, y - 9, width, 18);
-  drawSmall(text, x, y, middle_left, color);
-  canvas.clearClipRect();
+void drawText(const char* text, int x, int y, uint8_t datum, uint16_t color, const lgfx::IFont* font = &T14) {
+  drawRaw(T(text), x, y, datum, color, font);
 }
 
-// The biggest font that fits the width.
-void drawFitted(const char* text, int y, uint16_t color, int width = 228) {
-  static const lgfx::IFont* const FONTS[] = {&fonts::FreeSansBold24pt7b, &fonts::FreeSansBold18pt7b, &fonts::FreeSansBold12pt7b,
-                                             &fonts::FreeSansBold9pt7b, &fonts::Font2};
+void drawSmall(const char* text, int x, int y, uint8_t datum, uint16_t color) { drawText(text, x, y, datum, color); }
+
+// Text in a box of fixed width; what does not fit runs as a ticker: it rests at the start, then scrolls round.
+void drawMarquee(const char* text, int x, int y, int width, uint16_t color, const lgfx::IFont* font = &T14) {
   auto& d = canvas;
+  d.setFont(font);
+  d.setTextSize(1);
+  int w = d.textWidth(text);
+  d.setClipRect(x, y - 10, max(width, 1), 20);
+  if (w <= width) {
+    drawRaw(text, x, y, middle_left, color, font);
+  } else {
+    const int GAP = 30, REST_MS = 1500, PX_MS = 35;  // about 28 px a second
+    int loop = w + GAP;
+    unsigned long t = millis() % (REST_MS + (unsigned long)loop * PX_MS);
+    int shift = t < REST_MS ? 0 : (t - REST_MS) / PX_MS;
+    drawRaw(text, x - shift, y, middle_left, color, font);
+    drawRaw(text, x - shift + loop, y, middle_left, color, font);
+  }
+  d.clearClipRect();
+}
+
+void drawClipped(const char* text, int x, int y, int width, uint16_t color) { drawMarquee(T(text), x, y, width, color); }
+
+// The biggest size that fits the width.
+void drawFitted(const char* text, int y, uint16_t color, int width = 228) {
+  static const lgfx::IFont* const FONTS[] = {&T32, &T24, &T18, &T14};
+  auto& d = canvas;
+  text = T(text);
   d.setTextSize(1);
   for (auto font : FONTS) {
     d.setFont(font);
-    if (d.textWidth(text) <= width || font == FONTS[4]) break;
+    if (d.textWidth(text) <= width || font == FONTS[3]) break;
   }
   d.setTextDatum(middle_center);
   d.setTextColor(color);
   d.drawString(text, d.width() / 2, y);
 }
 
-// Seven-segment digits, shrunk to fit: the clock and the alert timers.
-void drawSegments(const char* text, int x, int y, uint16_t color, int width) {
+// Big digits, shrunk to fit: the clock and the alert timers.
+void drawBig(const char* text, int x, int y, uint16_t color, int width) {
   auto& d = canvas;
-  d.setFont(&fonts::Font7);
+  d.setFont(&T44);
   d.setTextSize(1);
   int w = d.textWidth(text);
   if (w > width) d.setTextSize((float)width / w);
@@ -808,9 +1079,11 @@ void drawHeader(const char* name, int number, Link link) {
   snprintf(num, sizeof num, "%02d", number);
   chamfer(0, 0, 22, 15, 4, C_ACCENT, true);
   drawText(num, 11, 8, middle_center, C_BLACK);
-  drawText(name, 27, 8, middle_left, C_ACCENT);
-  d.setFont(&fonts::Font2);
-  drawText("//VARTOVYI", 27 + d.textWidth(name) + 3, 9, middle_left, C_DIM, &fonts::Font0);
+  name = T(name);
+  drawRaw(name, 27, 8, middle_left, C_ACCENT);
+  int brandAt = 27 + d.textWidth(name) + 3;
+  d.setFont(&T11);
+  if (brandAt + d.textWidth("//VARTOVYI") < d.width() - 90) drawRaw("//VARTOVYI", brandAt, 9, middle_left, C_DIM, &T11);
   d.fillRect(d.width() - 85, 4, 7, 7, linkColor(link));
   drawBattery(d.width() - 2, 3, C_MUTED);
   d.drawFastHLine(0, 16, d.width(), C_DIM);
@@ -826,16 +1099,17 @@ void drawFooter(const char* next, const char* back, const char* ok) {
     d.fillTriangle(x, y + 4, x + 8, y + 4, x + 4, y - 4, C_ACCENT);
     drawText(next, x + 12, y, middle_left, C_TEXT);
   }
-  x = 86;
+  x = next[0] ? 86 : 4;
   if (back[0]) {
     d.fillTriangle(x, y - 4, x + 8, y - 4, x + 4, y + 4, C_ACCENT);
     drawText(back, x + 12, y, middle_left, C_TEXT);
   }
   if (ok[0]) {
-    d.setFont(&fonts::Font2);
+    ok = T(ok);
+    d.setFont(&T14);
     int w = d.textWidth(ok) + 30;
     chamfer(d.width() - w, FOOT_Y + 2, w, 13, 3, C_ACCENT, true);
-    drawText("M5", d.width() - w + 5, y, middle_left, C_BLACK, &fonts::Font0);
+    drawRaw("M5", d.width() - w + 5, y, middle_left, C_BLACK, &T11);
     drawText(ok, d.width() - 4, y, middle_right, C_BLACK);
   }
 }
@@ -868,7 +1142,7 @@ void drawAlarm(const char* title, const char* line1, const char* line2, uint16_t
   drawFitted(line1, 72, fg, 220);
   if (line2[0]) drawText(line2, d.width() / 2, 98, middle_center, fg);
   chamfer(d.width() / 2 - 58, d.height() - 14, 116, 14, 4, C_BLACK, true);
-  drawText("ANY KEY = SILENCE", d.width() / 2, d.height() - 7, middle_center, color, &fonts::Font0);
+  drawText("ANY KEY = SILENCE", d.width() / 2, d.height() - 7, middle_center, color, &T11);
 }
 
 const char* watchingText(char* line, size_t size) {
@@ -879,7 +1153,7 @@ const char* watchingText(char* line, size_t size) {
   } else if (!feed.list.count || watched == feed.list.count) {
     snprintf(line, size, "%s", cfg.oblastName);
   } else {
-    snprintf(line, size, "%d of %d zones", watched, feed.list.count);
+    snprintf(line, size, T("%d of %d zones"), watched, feed.list.count);
   }
   return line;
 }
@@ -888,10 +1162,12 @@ const char* watchingText(char* line, size_t size) {
 void drawTicker(int y, long long now) {
   auto& d = canvas;
   char watch[32], text[160];
-  snprintf(text, sizeof text, "OBL %s  //  WATCH %s  //  NET %s %ddBm  //  SEQ %ld  //  %s  //  ", cfg.oblastName,
+  char ver[24];
+  snprintf(ver, sizeof ver, "%s %s", T("VER"), VERSION);
+  snprintf(text, sizeof text, T("OBL %s  //  WATCH %s  //  NET %s %ddBm  //  SEQ %ld  //  %s  //  "), T(cfg.oblastName),
            watchingText(watch, sizeof watch), WiFi.isConnected() ? WiFi.SSID().c_str() : "--", WiFi.isConnected() ? WiFi.RSSI() : 0,
-           feed.seq, nightNow(now) ? "NIGHT MODE" : saverNow ? "SAVER" : "VER " VERSION);
-  d.setFont(&fonts::Font2);
+           feed.seq, nightNow(now) ? T("NIGHT MODE") : saverNow ? T("SAVER") : ver);
+  d.setFont(&T14);
   d.setTextSize(1);
   int w = d.textWidth(text), shift = (millis() / 40) % w;
   d.setClipRect(0, y - 8, d.width(), 16);
@@ -909,11 +1185,13 @@ void drawHome(Link link, long long now) {
     drawFitted(viewTitle(view), 34, onColor(color), 220);
     char timer[16] = "--:--:--";
     if (view.since && timeIsSynced(now)) formatTimer(now - view.since, timer, sizeof timer);
-    drawSegments(timer, d.width() / 2, 73, color, 200);
+    drawBig(timer, d.width() / 2, 73, color, 200);
     char line[64];
-    if (linkIsBad(link)) snprintf(line, sizeof line, "%s // LAST KNOWN STATE", linkTitle(link));
-    else if (view.level == L_LOST) snprintf(line, sizeof line, "%s: may still be active", view.zone);
-    else snprintf(line, sizeof line, "%s  %s", view.zone, view.threats);
+    char zone[64], threats[96];
+    zoneText(view.zone, zone, sizeof zone);
+    if (linkIsBad(link)) snprintf(line, sizeof line, T("%s // LAST KNOWN STATE"), T(linkTitle(link)));
+    else if (view.level == L_LOST) snprintf(line, sizeof line, T("%s: may still be active"), zone);
+    else snprintf(line, sizeof line, "%s  %s", zone, threatsText(view.threats, threats, sizeof threats));
     drawClipped(line, 6, 107, d.width() - 12, linkIsBad(link) ? C_YELLOW : C_TEXT);
     return;
   }
@@ -934,7 +1212,7 @@ void drawHome(Link link, long long now) {
   struct tm local;
   if (timeIsSynced(now) && localtime_r(&raw, &local)) strftime(clock, sizeof clock, "%H:%M", &local);
   brackets(30, 21, d.width() - 60, 54, C_DIM);
-  drawSegments(clock, d.width() / 2, 48, C_ACCENT, 170);
+  drawBig(clock, d.width() / 2, 48, C_ACCENT, 170);
   chamfer(4, 79, d.width() - 8, 20, 5, C_GREEN, false);
   d.fillRect(10, 85, 8, 8, C_GREEN);
   drawText("ALL CLEAR", 24, 89, middle_left, C_GREEN);
@@ -975,11 +1253,12 @@ void drawMap(Link link) {
       chamfer(x, y, TW, TH, 4, C_PANEL, true);
       chamfer(x, y, TW, TH, 4, a ? levelColor(a->level) : wanted ? C_ACCENT : C_DIM, false);
     }
-    d.setFont(&fonts::Font2);
-    drawText(l.zones[i].label, x + TW / 2, y + TH / 2, middle_center, text, d.textWidth(l.zones[i].label) > TW - 6 ? (const lgfx::IFont*)&fonts::Font0 : &fonts::Font2);
+    const char* label = cfg.lang == LANG_UA && l.zones[i].uaLabel[0] ? l.zones[i].uaLabel : l.zones[i].label;
+    d.setFont(&T14);
+    drawRaw(label, x + TW / 2, y + TH / 2, middle_center, text, d.textWidth(label) > TW - 6 ? &T11 : &T14);
   }
   char line[20];
-  snprintf(line, sizeof line, "%d ACTIVE", feed.count);
+  snprintf(line, sizeof line, T("%d ACTIVE"), feed.count);
   int x = X + l.count % COLS * (TW + GAP), y = Y + l.count / COLS * (TH + GAP);
   drawText(line, x + TW / 2, y + TH / 2, middle_center, feed.count ? C_YELLOW : C_DIM);
 }
@@ -1012,7 +1291,8 @@ void drawDetails(Link link, long long now) {
     char timer[16] = "";
     if (z.since && timeIsSynced(now)) formatTimer(now - z.since, timer, sizeof timer);
     drawText(timer, d.width() - 8, y + 9, middle_right, levelColor(z.level));
-    drawClipped(z.threats[0] ? z.threats : "threat not specified", 12, y + 23, d.width() - 22, C_MUTED);
+    char threats[96];
+    drawClipped(z.threats[0] ? threatsText(z.threats, threats, sizeof threats) : "threat not specified", 12, y + 23, d.width() - 22, C_MUTED);
   }
 }
 
@@ -1058,11 +1338,11 @@ void drawStats(Link link) {
     chamfer(3, y, d.width() - 6, 31, 5, C_PANEL, true);
     drawClipped(s.zone, 9, y + 9, 224, C_TEXT);
     char a[12], b[12], line[32];
-    formatMinutes(s.todayMin, a, sizeof a);
-    snprintf(line, sizeof line, "TODAY %d / %s", s.todayCount, a);
+    minutesText(s.todayMin, a, sizeof a);
+    snprintf(line, sizeof line, T("TODAY %d / %s"), s.todayCount, a);
     drawClipped(line, 9, y + 23, 112, C_ACCENT);
-    formatMinutes(s.weekMin, b, sizeof b);
-    snprintf(line, sizeof line, "WEEK %d / %s", s.weekCount, b);
+    minutesText(s.weekMin, b, sizeof b);
+    snprintf(line, sizeof line, T("WEEK %d / %s"), s.weekCount, b);
     drawClipped(line, 123, y + 23, 112, C_MUTED);
   }
 }
@@ -1080,29 +1360,37 @@ void drawSystem(Link link, long long now) {
   snprintf(rows[2][0], 40, "OBLAST");
   snprintf(rows[2][1], 40, "%s", cfg.oblastName);
   snprintf(rows[3][0], 40, "DELAY");
-  if (lastDelay >= 0) snprintf(rows[3][1], 40, "%ld s, last alert", lastDelay);
+  if (lastDelay >= 0) snprintf(rows[3][1], 40, T("%ld s, last alert"), lastDelay);
   else snprintf(rows[3][1], 40, "not measured yet");
   snprintf(rows[4][0], 40, "POWER");
-  snprintf(rows[4][1], 40, "%d.%02d V %s%s", batteryMv / 1000, batteryMv % 1000 / 10, usb ? "usb" : "battery", saverNow ? ", saver" : "");
+  snprintf(rows[4][1], 40, "%d.%02d V %s%s", batteryMv / 1000, batteryMv % 1000 / 10, usb ? "usb" : T("battery"), saverNow ? T(", saver") : "");
   snprintf(rows[5][0], 40, "FIRMWARE");
-  snprintf(rows[5][1], 40, "%s, up %lum", VERSION, millis() / 60000);
+  snprintf(rows[5][1], 40, T("%s, up %lum"), VERSION, millis() / 60000);
+  int valuesAt = 0;  // after the widest label in this language
+  d.setFont(&T14);
+  for (int r = 0; r < 6; r++) valuesAt = max(valuesAt, (int)d.textWidth(T(rows[r][0])));
+  valuesAt += 6 + 8;
   for (int r = 0; r < 6; r++) {
     int y = 26 + r * 16;
     drawText(rows[r][0], 6, y, middle_left, C_ACCENT);
-    drawClipped(rows[r][1], 76, y, d.width() - 80, r == 1 && link != LINK_OK ? C_YELLOW : C_TEXT);
+    drawClipped(rows[r][1], valuesAt, y, d.width() - valuesAt - 4, r == 1 && link != LINK_OK ? C_YELLOW : C_TEXT);
   }
 }
 
 void menuText(int item, char* left, char* right, size_t size) {
   right[0] = 0;
   switch (item) {
+    case MI_LANG:  // in both languages, so either reader finds it
+      snprintf(left, size, "Мова · Language");
+      snprintf(right, size, cfg.lang == LANG_UA ? "Українська" : "English");
+      break;
     case MI_REGION:
       snprintf(left, size, "Oblast");
       snprintf(right, size, "%s", cfg.oblastName);
       break;
     case MI_ZONES:
       snprintf(left, size, "Zones");
-      snprintf(right, size, "%d of %d", watchedCount(feed.list, cfg.zones), feed.list.count);
+      snprintf(right, size, T("%d of %d"), watchedCount(feed.list, cfg.zones), feed.list.count);
       break;
     case MI_NIGHT:
       snprintf(left, size, "Night mode");
@@ -1156,26 +1444,38 @@ void moveBar(unsigned long t) {
 bool menuAnimating(unsigned long t) { return barMovedAt && t - barMovedAt < SLIDE_MS + DECODE_MS; }
 float easeOut(float p) { return 1 - (1 - p) * (1 - p) * (1 - p); }
 
-// Letters not yet decoded show as noise, resolving left to right.
+// Letters not yet decoded show as noise, resolving left to right. Works on whole UTF-8 letters, so Cyrillic stays intact.
 void decode(const char* src, char* out, size_t size, float progress) {
   static const char NOISE[] = "#$%&*+<>/|=01ABCDEFXZ";
-  size_t n = min(strlen(src), size - 1), shown = progress >= 1 ? n : (size_t)(n * progress);
-  for (size_t i = 0; i < n; i++) out[i] = i < shown || src[i] == ' ' ? src[i] : NOISE[esp_random() % (sizeof NOISE - 1)];
-  out[n] = 0;
+  size_t letters = 0;
+  for (const char* p = src; *p; p++) letters += ((uint8_t)*p & 0xC0) != 0x80;
+  size_t shown = progress >= 1 ? letters : (size_t)(letters * progress), i = 0, o = 0;
+  for (const char* p = src; *p && o + 4 < size; i++) {
+    size_t n = 1;
+    while (((uint8_t)p[n] & 0xC0) == 0x80) n++;  // the rest of this letter's bytes
+    if (i < shown || *p == ' ') memcpy(out + o, p, n), o += n;
+    else out[o++] = NOISE[esp_random() % (sizeof NOISE - 1)];
+    p += n;
+  }
+  out[o] = 0;
 }
 
 void drawRow(int r, const char* left, const char* right, bool onBar, float decoded) {
+  auto& d = canvas;
   int y = 20 + r * 20;
-  char shown[32];
-  decode(left, shown, sizeof shown, decoded);
-  drawClipped(shown, 10, y + 10, 130, onBar ? C_BLACK : C_TEXT);
-  drawText(right, canvas.width() - 9, y + 10, middle_right, onBar ? C_BLACK : C_ACCENT);
+  char shown[64];
+  decode(T(left), shown, sizeof shown, decoded);  // translated first, so the noise resolves into the words shown
+  right = T(right);
+  d.setFont(&T14);
+  int room = d.width() - 9 - d.textWidth(right) - 8 - 10;  // the name gets what the value leaves
+  drawMarquee(shown, 10, y + 10, max(room, 20), onBar ? C_BLACK : C_TEXT);
+  drawRaw(right, d.width() - 9, y + 10, middle_right, onBar ? C_BLACK : C_ACCENT);
 }
 
 // Asked when an update is chosen during an alert: the stick hears nothing from the server while it downloads.
 void drawUpdateWarning(Link link) {
   auto& d = canvas;
-  drawHeader("UPDATE", MI_UPDATE + 1, link);
+  drawHeader("FIRMWARE", MI_UPDATE + 1, link);
   hazard(18, 8, C_YELLOW);
   drawFitted("ALERT IS ACTIVE", 41, C_YELLOW, 220);
   drawText("It takes about a minute,", d.width() / 2, 64, middle_center, C_TEXT);
@@ -1256,7 +1556,7 @@ void drawPortal() {
     drawText(apPass.c_str(), x, 86, middle_left, C_MUTED);
   }
   chamfer(x, 111, 92, 18, 4, C_ACCENT, true);
-  drawText("M5 / BACK: EXIT", x + 46, 120, middle_center, C_BLACK, &fonts::Font0);
+  drawText("M5 / BACK: EXIT", x + 46, 120, middle_center, C_BLACK, &T11);
 }
 
 void drawClear() {
@@ -1264,7 +1564,7 @@ void drawClear() {
   scanlines();
   brackets(6, 8, d.width() - 12, d.height() - 16, C_GREEN);
   chamfer(20, 34, d.width() - 40, 44, 8, C_GREEN, true);
-  drawFitted("ALL CLEAR", 56, C_BLACK, 190);
+  drawFitted("ALL-CLEAR", 56, C_BLACK, 190);
   drawText("THREAT ENDED // STAND DOWN", d.width() / 2, 96, middle_center, C_GREEN);
 }
 
@@ -1308,17 +1608,17 @@ void bootAnimation() {
     if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) break;
     scanlines();
     if (e < LOGO - LOGO_FOR) {
-      drawText("VARTOVYI // AIR ALERT TERMINAL", 6, 10, middle_left, C_ACCENT, &fonts::Font0);
+      drawRaw("VARTOVYI // AIR ALERT TERMINAL", 6, 10, middle_left, C_ACCENT, &T11);
       d.drawFastHLine(6, 17, d.width() - 12, C_DIM);
       int shown = e < OPEN ? 0 : min(N, (int)((e - OPEN) / STEP) + 1);
       for (int i = 0; i < shown; i++) {
         int y = 31 + i * 15;
         bool last = i == shown - 1 && e < OPEN + (unsigned long)(i + 1) * STEP;  // still being typed
-        drawText(LINES[i][0], 6, y, middle_left, C_TEXT, &fonts::FreeMono9pt7b);
-        d.setFont(&fonts::FreeMono9pt7b);
+        drawRaw(LINES[i][0], 6, y, middle_left, C_TEXT);
+        d.setFont(&T14);
         int dotsFrom = 6 + d.textWidth(LINES[i][0]) + 4;
         for (int x = dotsFrom; x < 160; x += 6) d.fillRect(x, y + 3, 2, 2, C_DIM);
-        if (!last) drawText(LINES[i][1], d.width() - 8, y, middle_right, i == 4 && !poolCount ? C_YELLOW : C_GREEN, &fonts::FreeMono9pt7b);
+        if (!last) drawRaw(LINES[i][1], d.width() - 8, y, middle_right, i == 4 && !poolCount ? C_YELLOW : C_GREEN);
       }
       float bar = e < OPEN ? 0 : min(1.0f, (e - OPEN) / (float)(LOG - OPEN));
       d.drawRect(6, 112, d.width() - 12, 10, C_DIM);
@@ -1328,9 +1628,9 @@ void bootAnimation() {
       char name[12];
       decode("VARTOVYI", name, sizeof name, p);
       brackets(10, 22, d.width() - 20, 76, C_DIM);
-      if (p < 1) drawText(name, d.width() / 2 + 2, 58, middle_center, C_CYAN, &fonts::Orbitron_Light_32);
-      drawText(name, d.width() / 2, 56, middle_center, C_ACCENT, &fonts::Orbitron_Light_32);
-      drawText(VERSION " // DEVELOPED BY SKERPSH", d.width() / 2, 88, middle_center, C_MUTED);
+      if (p < 1) drawRaw(name, d.width() / 2 + 2, 58, middle_center, C_CYAN, &fonts::Orbitron_Light_32);
+      drawRaw(name, d.width() / 2, 56, middle_center, C_ACCENT, &fonts::Orbitron_Light_32);
+      drawRaw(VERSION " // DEVELOPED BY SKERPSH", d.width() / 2, 88, middle_center, C_MUTED);
       glitchUntil = p < 1 ? millis() + 40 : 0;
       drawGlitch(millis());
     }
@@ -1442,7 +1742,7 @@ void drawImpact(unsigned long t) {
     chamfer(28, 46, W - 56, 42, 6, C_RED, false);
     drawText("IMPACT DETECTED", W / 2, 59, middle_center, C_RED);
     char line[24];
-    snprintf(line, sizeof line, "RECALIBRATING%.*s", (int)(e / 250 % 4), "...");
+    snprintf(line, sizeof line, T("RECALIBRATING%.*s"), (int)(e / 250 % 4), "...");
     drawText(line, W / 2, 76, middle_center, C_ACCENT);
   }
 }
@@ -1501,7 +1801,9 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
   // Short blink every 2 s while an alert is active but silenced: it still says so in a dark room.
   digitalWrite(LED_PIN, (alarm ? on : active && t % 2000 < 120) ? HIGH : LOW);
 
-  uint8_t wanted = alarm || clearing ? BRIGHT_ALARM : portalOn ? BRIGHT_ACTIVE : saverNow ? BRIGHT_SAVER : active ? BRIGHT_ACTIVE : BRIGHT_LEVELS[cfg.bright];
+  // The user's brightness always counts; saver halves it; only a siren or an all-clear goes to full.
+  uint8_t level = BRIGHT_LEVELS[cfg.bright];
+  uint8_t wanted = alarm || clearing ? BRIGHT_ALARM : portalOn ? max(level, BRIGHT_ACTIVE) : saverNow ? max(8, level / 2) : level;
   screenOff = saverNow && !alarm && !clearing && !portalOn && t - lastInput > SCREEN_OFF_MS;
   static uint8_t brightness = 1;
   if (screenOff) wanted = 0;
@@ -1522,7 +1824,9 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
     drawAlarm(linkTitle(link), "Alerts may be missed", "", C_YELLOW, on);
   } else if (alarm) {
     if (view.since && timeIsSynced(now)) formatTimer(now - view.since, timer, sizeof timer);
-    drawAlarm(viewTitle(view), view.zone[0] ? view.zone : cfg.oblastName, view.threats[0] ? view.threats : timer, levelColor(view.level), on);
+    char zone[64], threats[96];
+    zoneText(view.zone[0] ? view.zone : cfg.oblastName, zone, sizeof zone);
+    drawAlarm(viewTitle(view), zone, view.threats[0] ? threatsText(view.threats, threats, sizeof threats) : timer, levelColor(view.level), on);
   } else if (portalOn) {
     drawPortal();
   } else if (clearing) {
@@ -1594,6 +1898,11 @@ bool playSound(Sound s, unsigned long t) {
 
 void activateMenuItem(unsigned long t) {
   switch (menuIndex) {
+    case MI_LANG:
+      cfg.lang = cfg.lang == LANG_UA ? LANG_EN : LANG_UA;
+      saveSettings();
+      glitch(t);
+      break;
     case MI_REGION:
       menu = M_REGIONS;
       menuIndex = 0;
@@ -1710,6 +2019,7 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   if (!canvas.createSprite(M5.Display.width(), M5.Display.height())) Serial.println("no memory for the screen buffer");
+  loadFonts();
   poolLock = xSemaphoreCreateMutex();
   loadSettings();
   trial = prefs.getBool("trial", false);

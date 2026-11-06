@@ -116,6 +116,28 @@ def zone_name(region: dict) -> str:
     return latin(name.removesuffix(" район").replace("область", "oblast"))
 
 
+def zone_name_ua(region: dict) -> str:
+    """The name in Ukrainian, as the API writes it, without the words a small screen can spare."""
+    name = region.get("regionName") or str(region.get("regionId"))
+    if name.startswith("м. "):
+        return name[3:].split(" та ")[0]
+    if name == "Автономна Республіка Крим":
+        return "Крим"
+    return name.removesuffix(" район")
+
+
+def zone_label_ua(name: str) -> str:
+    """Short, for a map tile: Обухівський is ОБУХІВ, Донецький is ДОНЕЦЬК."""
+    if name.endswith(" область"):
+        return "ОБЛАСТЬ"
+    stem = name.split("-")[0]
+    if stem.endswith("ий"):
+        stem = stem[:-2].removesuffix("ськ")
+    if len(stem) < 4:
+        stem = name
+    return stem[:8].upper()
+
+
 def zone_label(name: str) -> str:
     """Short, for a map tile: Obukhivskyi is OBUKHIV, Donetskyi is DONETS."""
     if name.endswith(" oblast"):
@@ -156,14 +178,15 @@ class Regions:
         first = {"c": 0, "r": 1, "o": 2}  # the city first and the oblast last, as the first firmware had them
         for zones in self.groups.values():
             zones.sort(key=lambda z: (first[self.zones[z]["kind"]], self.zones[z]["name"]))
-            labels = [self.zones[z]["label"] for z in zones]
-            for z in zones:  # Kharkiv the city and Kharkivskyi the raion
-                if self.zones[z]["kind"] == "r" and labels.count(self.zones[z]["label"]) > 1:
-                    self.zones[z]["label"] = self.zones[z]["label"][:7] + " R"
+            for key, mark in (("label", " R"), ("ua_label", " Р")):  # Kharkiv the city and Kharkivskyi the raion
+                labels = [self.zones[z][key] for z in zones]
+                for z in zones:
+                    if self.zones[z]["kind"] == "r" and labels.count(self.zones[z][key]) > 1:
+                        self.zones[z][key] = self.zones[z][key][:7 if key == "label" else 6] + mark
 
     def _add(self, rid: str, region: dict, group: str, kind: str) -> str:
-        name = zone_name(region)
-        self.zones[rid] = {"group": group, "name": name, "label": zone_label(name), "kind": kind}
+        name, ua = zone_name(region), zone_name_ua(region)
+        self.zones[rid] = {"group": group, "name": name, "label": zone_label(name), "kind": kind, "ua": ua, "ua_label": zone_label_ua(ua)}
         self.zone_of[rid] = rid
         self.groups.setdefault(group, []).append(rid)
         return rid
@@ -172,8 +195,12 @@ class Regions:
         z = self.zones.get(group)
         return z["name"].removesuffix(" oblast") if z else group
 
+    def title_ua(self, group: str) -> str:
+        z = self.zones.get(group)
+        return z["ua"].removesuffix(" область") if z else group
+
     def listing(self) -> str:
-        return "".join(f"r {g}|{self.title(g)}\n" for g in sorted(self.groups, key=self.title))
+        return "".join(f"r {g}|{self.title(g)}|{self.title_ua(g)}\n" for g in sorted(self.groups, key=self.title))
 
 
 def load_regions(path: str) -> Regions:
@@ -324,7 +351,7 @@ class State:
 
     def _zone_list(self, group: str) -> list[str]:
         """The oblast's zones in a fixed order: the stick keeps its choice as their positions."""
-        return [f"obl {group}"] + ["n " + "|".join((z["name"], z["label"], z["kind"]))
+        return [f"obl {group}"] + ["n " + "|".join((z["name"], z["label"], z["kind"], z["ua"], z["ua_label"]))
                                    for z in (self.regions.zones[i] for i in self.regions.groups.get(group, []))]
 
     def render(self, group: str = COMPAT_GROUP, now: float | None = None) -> str:

@@ -62,6 +62,13 @@ assert len(R.groups) == 25 and all(len(z) <= 12 for z in R.groups.values())     
 assert all(len(z["name"]) < 24 and len(z["label"]) <= 9 for z in R.zones.values())  # its name and tile sizes
 assert R.zones["126"]["label"] == "BOHODUKHI" and "r 14|Kyivska" in R.listing()
 assert [R.zones[z]["label"] for z in R.groups["22"]].count("KHARKIV") == 1    # the city, not also its raion
+# Ukrainian names and map labels travel alongside the Latin ones
+assert [R.zones[z]["ua"] for z in R.groups["14"]][:2] == ["Київ", "Білоцерківський"] and R.zones["14"]["ua"] == "Київська область"
+assert [R.zones[z]["ua_label"] for z in R.groups["14"]][:4] == ["КИЇВ", "БІЛОЦЕРК", "БОРИСПІЛ", "БРОВАР"]
+assert R.zones["9999"]["ua"] == "Крим" and R.zones["1293"]["ua"] == "Харків" and R.title_ua("14") == "Київська"
+assert [R.zones[z]["ua_label"] for z in R.groups["22"]].count("ХАРКІВ") == 1
+assert all(len(z["ua_label"]) <= 8 and len(z["ua"].encode()) < 56 for z in R.zones.values())   # the stick's field sizes
+assert "r 14|Kyivska|Київська" in R.listing()
 
 # The three examples from the documentation, in order
 s = State(regions=R)
@@ -170,7 +177,7 @@ s.apply_event({"regionId": 31, "alarmType": "AIR", "activeAlertLevels": [{"alert
 s.apply_event(event(31, []), NOON + 600)
 s.apply_event({"regionId": 31, "alarmType": "AIR", "activeAlertLevels": [{"alertLevel": "Yellow", "reason": "", "createdAt": datetime.fromtimestamp(NOON + 1200, KYIV).isoformat()}]}, NOON + 1200)
 text = s.render_history(now=NOON + 1800)
-assert "n Kyiv|KYIV|c" in text and "obl 14" in text and not s.render_history("22", NOON + 1800).count("h ")
+assert "n Kyiv|KYIV|c|Київ|КИЇВ" in text and "obl 14" in text and not s.render_history("22", NOON + 1800).count("h ")
 events = [l for l in text.splitlines() if l.startswith("h ")]
 assert [e.split("|")[2] for e in events] == ["yellow", "none", "red"]   # newest first
 assert events[2].endswith("|BALLISTIC")
