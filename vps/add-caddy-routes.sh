@@ -25,6 +25,14 @@ grep -q '@peacestick ' "$FILE" || route peacestick /peace-stick alert.txt >>"$ne
 grep -q '@peacestickhist ' "$FILE" || route peacestickhist /peace-stick/history history.txt >>"$new"
 grep -q '@peacestickver ' "$FILE" || route peacestickver /peace-stick/version firmware.md5 >>"$new"
 grep -q '@peacestickfw ' "$FILE" || route peacestickfw /peace-stick/firmware firmware.bin >>"$new"
+# Every oblast's file and the list of them, for the firmware that covers all of Ukraine.
+grep -q 'handle_path /peace-stick/v2/' "$FILE" || cat >>"$new" <<EOF
+    handle_path /peace-stick/v2/* {
+        root * /var/lib/peace-stick/v2
+        file_server
+    }
+
+EOF
 # The bridge checks each webhook's RSA signature.
 grep -q '@peacestickhook ' "$FILE" || cat >>"$new" <<EOF
     @peacestickhook path /peace-stick/webhook

@@ -19,32 +19,41 @@ enum Level { L_NONE, L_LOST, L_ALERT, L_YELLOW, L_RED, L_UNKNOWN };
 enum Link { LINK_WAIT, LINK_OK, LINK_NOWIFI, LINK_NOANSWER, LINK_STALE, LINK_BOT };
 enum Sound { S_NONE, S_SIREN, S_BALLISTIC, S_BEEPS, S_LINK, S_CHIME, S_SOFT };
 
-struct KnownZone {
-  const char* name;   // as the bridge writes it
-  const char* label;  // short, for the map
-};
-const KnownZone KNOWN_ZONES[] = {
-    {"Kyiv", "KYIV"},          {"Vyshhorodskyi", "VYSH"},  {"Buchanskyi", "BUCHA"},       {"Brovarskyi", "BROV"},
-    {"Fastivskyi", "FAST"},    {"Obukhivskyi", "OBUKH"},   {"Boryspilskyi", "BORYS"},     {"Bilotserkivskyi", "B.TSERK"},
-    {"Kyivska oblast", "OBLAST"},
-};
-const int ZONE_COUNT = sizeof KNOWN_ZONES / sizeof KNOWN_ZONES[0];
-const int ZONE_KYIV = 0, ZONE_OBLAST = ZONE_COUNT - 1;
-const unsigned DEFAULT_ZONES = 1u << ZONE_KYIV;
+const int REGION_ID = 8;
+const unsigned DEFAULT_ZONES = ~0u;  // a new oblast: all of it, until the user narrows it down
 
-inline int zoneIndex(const char* name) {
-  for (int i = 0; i < ZONE_COUNT; i++)
-    if (!strcmp(KNOWN_ZONES[i].name, name)) return i;
+// The oblast's zones, as the bridge lists them in a fixed order; the user's choice is a bit per position.
+struct ZoneInfo {
+  char name[ZONE_NAME];
+  char label[10];  // short, for the map
+  char kind;       // 'c' a city listed apart, 'r' a raion, 'o' the whole oblast
+};
+struct ZoneList {
+  int count;
+  ZoneInfo zones[MAX_ZONES];
+};
+
+inline int zoneIndex(const ZoneList& l, const char* name) {
+  for (int i = 0; i < l.count; i++)
+    if (!strcmp(l.zones[i].name, name)) return i;
   return -1;
 }
 
 // A zone we do not know could be anything, so it counts. An alert for the whole oblast concerns
-// whoever watches one of its raions, the same rule the bot uses.
-inline bool zoneWanted(int index, unsigned mask) {
+// whoever watches one of its raions; a city listed apart is not one of them.
+inline bool zoneWanted(const ZoneList& l, int index, unsigned mask) {
   if (index < 0) return true;
   if (mask & (1u << index)) return true;
-  unsigned raions = ((1u << ZONE_COUNT) - 1) & ~(1u << ZONE_KYIV) & ~(1u << ZONE_OBLAST);
-  return index == ZONE_OBLAST && (mask & raions);
+  if (l.zones[index].kind != 'o') return false;
+  for (int i = 0; i < l.count; i++)
+    if (l.zones[i].kind == 'r' && (mask & (1u << i))) return true;
+  return false;
+}
+
+inline int watchedCount(const ZoneList& l, unsigned mask) {
+  int n = 0;
+  for (int i = 0; i < l.count; i++) n += (mask >> i) & 1;
+  return n;
 }
 
 struct ZoneAlert {
@@ -59,6 +68,8 @@ struct ZoneAlert {
 };
 
 struct Feed {
+  char obl[REGION_ID];  // whose file this is: right after a change of oblast the old one may still arrive
+  ZoneList list;
   long long ts;
   long long msgTs;  // when the bot sent the newest escalation
   long seq;
@@ -89,6 +100,20 @@ inline void nextField(const char*& s, const char* end, const char*& field, size_
   const char* bar = (const char*)memchr(s, '|', end - s);
   len = (bar ? bar : end) - s;
   s = bar ? bar + 1 : end;
+}
+
+// Format of a zone list line: name|label|kind
+inline void parseZoneInfo(const char* s, const char* end, ZoneList& l) {
+  if (l.count >= MAX_ZONES) return;
+  ZoneInfo& z = l.zones[l.count++];
+  const char* f;
+  size_t n;
+  nextField(s, end, f, n);
+  copyValue(z.name, sizeof z.name, f, n);
+  nextField(s, end, f, n);
+  copyValue(z.label, sizeof z.label, f, n);
+  nextField(s, end, f, n);
+  z.kind = n ? *f : 'r';
 }
 
 inline void parseZoneLine(const char* s, const char* end, ZoneAlert& z) {
@@ -129,7 +154,9 @@ inline bool parseFeed(const char* s, Feed& out) {
       if (keyLen == 1 && *s == 'z') {
         if (out.count < MAX_ZONES) parseZoneLine(val, val + valLen, out.zones[out.count++]);
         // Zones beyond the limit must not hide an alert: the bridge sorts the worst first.
-      } else if (keyLen == 2 && !strncmp(s, "ts", 2)) out.ts = strtoll(val, nullptr, 10);
+      } else if (keyLen == 1 && *s == 'n') parseZoneInfo(val, val + valLen, out.list);
+      else if (keyLen == 3 && !strncmp(s, "obl", 3)) copyValue(out.obl, sizeof out.obl, val, valLen);
+      else if (keyLen == 2 && !strncmp(s, "ts", 2)) out.ts = strtoll(val, nullptr, 10);
       else if (keyLen == 3 && !strncmp(s, "seq", 3)) out.seq = strtol(val, nullptr, 10);
       else if (keyLen == 3 && !strncmp(s, "msg", 3)) out.msgTs = strtoll(val, nullptr, 10);
       else if (keyLen == 3 && !strncmp(s, "bot", 3)) out.botOk = *val == '1';
@@ -151,11 +178,12 @@ inline bool parseFeed(const char* s, Feed& out) {
 }
 
 // True if the direction names a zone the user watches, as a whole word: "Kyiv" is not in "Kyivska oblast".
-inline bool headsToWatched(const char* direction, unsigned mask) {
-  for (int i = 0; i < ZONE_COUNT; i++) {
+inline bool headsToWatched(const char* direction, const ZoneList& l, unsigned mask) {
+  for (int i = 0; i < l.count; i++) {
     if (!(mask & (1u << i))) continue;
-    size_t n = strlen(KNOWN_ZONES[i].name);
-    for (const char* at = strstr(direction, KNOWN_ZONES[i].name); at; at = strstr(at + 1, KNOWN_ZONES[i].name)) {
+    const char* name = l.zones[i].name;
+    size_t n = strlen(name);
+    for (const char* at = strstr(direction, name); at; at = strstr(at + 1, name)) {
       bool startOk = at == direction || !isalnum((unsigned char)at[-1]);
       if (startOk && !isalnum((unsigned char)at[n])) return true;
     }
@@ -164,8 +192,8 @@ inline bool headsToWatched(const char* direction, unsigned mask) {
 }
 
 // Watched, or heading for what is watched.
-inline bool zoneMatters(const ZoneAlert& z, unsigned mask) {
-  return zoneWanted(zoneIndex(z.name), mask) || headsToWatched(z.direction, mask);
+inline bool zoneMatters(const ZoneAlert& z, const ZoneList& l, unsigned mask) {
+  return zoneWanted(l, zoneIndex(l, z.name), mask) || headsToWatched(z.direction, l, mask);
 }
 
 // What the zones the user watches add up to.
@@ -198,8 +226,8 @@ inline View computeView(const Feed& f, unsigned mask) {
   const ZoneAlert* top = nullptr;
   for (int i = 0; i < f.count; i++) {
     const ZoneAlert& z = f.zones[i];
-    if (z.level == L_NONE || !zoneMatters(z, mask)) continue;
-    bool watched = zoneWanted(zoneIndex(z.name), mask);
+    if (z.level == L_NONE || !zoneMatters(z, f.list, mask)) continue;
+    bool watched = zoneWanted(f.list, zoneIndex(f.list, z.name), mask);
     v.count++;
     if (!top || z.level > top->level) top = &z;
     if (z.level > v.level) v.level = z.level;
@@ -212,7 +240,7 @@ inline View computeView(const Feed& f, unsigned mask) {
     addThreats(v.threats, sizeof v.threats, z.threats);
   }
   if (top) {
-    if (!zoneWanted(zoneIndex(top->name), mask)) snprintf(v.zone, sizeof v.zone, "%.15s to %.20s", top->name, top->direction);
+    if (!zoneWanted(f.list, zoneIndex(f.list, top->name), mask)) snprintf(v.zone, sizeof v.zone, "%.15s to %.20s", top->name, top->direction);
     else if (v.count > 1) snprintf(v.zone, sizeof v.zone, "%.24s +%d", top->name, v.count - 1);
     else snprintf(v.zone, sizeof v.zone, "%.31s", top->name);
   }
@@ -246,14 +274,17 @@ struct ZoneStats {
 };
 
 struct History {
+  char obl[REGION_ID];
   int eventCount, statCount;
   HistoryEvent events[MAX_EVENTS];
-  ZoneStats stats[ZONE_COUNT];
+  ZoneStats stats[MAX_ZONES];
 };
 
 // Keeps only the zones the user watches, so a busy neighbour does not use up the screen.
+// The file lists its zones first, so the choice is read against the same list.
 inline bool parseHistory(const char* s, unsigned mask, History& out) {
   out = History{};
+  ZoneList list{};
   bool ours = false;
   while (s && *s) {
     const char* end = strchr(s, '\n');
@@ -263,6 +294,10 @@ inline bool parseHistory(const char* s, unsigned mask, History& out) {
     size_t n;
     if (!strncmp(s, "ts ", 3)) {
       ours = true;
+    } else if (!strncmp(s, "n ", 2) && val < stop) {
+      parseZoneInfo(val, stop, list);
+    } else if (!strncmp(s, "obl ", 4) && s + 4 < stop) {
+      copyValue(out.obl, sizeof out.obl, s + 4, stop - s - 4);
     } else if (!strncmp(s, "h ", 2) && val < stop) {
       HistoryEvent e{};
       nextField(val, stop, f, n);
@@ -273,7 +308,7 @@ inline bool parseHistory(const char* s, unsigned mask, History& out) {
       e.level = parseLevel(f, n);
       nextField(val, stop, f, n);
       copyValue(e.threats, sizeof e.threats, f, n);
-      if (zoneWanted(zoneIndex(e.zone), mask) && out.eventCount < MAX_EVENTS) out.events[out.eventCount++] = e;
+      if (zoneWanted(list, zoneIndex(list, e.zone), mask) && out.eventCount < MAX_EVENTS) out.events[out.eventCount++] = e;
     } else if (!strncmp(s, "s ", 2) && val < stop) {
       ZoneStats z{};
       nextField(val, stop, f, n);
@@ -286,11 +321,44 @@ inline bool parseHistory(const char* s, unsigned mask, History& out) {
       z.weekCount = atoi(f);
       nextField(val, stop, f, n);
       z.weekMin = atoi(f);
-      if (zoneWanted(zoneIndex(z.zone), mask) && out.statCount < ZONE_COUNT) out.stats[out.statCount++] = z;
+      if (zoneWanted(list, zoneIndex(list, z.zone), mask) && out.statCount < MAX_ZONES) out.stats[out.statCount++] = z;
     }
     s = end ? end + 1 : nullptr;
   }
   return ours;
+}
+
+// ---------- oblasts ----------
+
+const int MAX_REGIONS = 32;
+struct Region {
+  char id[REGION_ID];
+  char name[ZONE_NAME];
+};
+struct RegionList {
+  int count;
+  Region regions[MAX_REGIONS];
+};
+
+// Format: "r id|name" per line, in the order to show them.
+inline bool parseRegions(const char* s, RegionList& out) {
+  out = RegionList{};
+  while (s && *s) {
+    const char* end = strchr(s, '\n');
+    const char* stop = end ? end : s + strlen(s);
+    if (!strncmp(s, "r ", 2) && out.count < MAX_REGIONS) {
+      const char* val = s + 2;
+      const char* f;
+      size_t n;
+      Region& r = out.regions[out.count++];
+      nextField(val, stop, f, n);
+      copyValue(r.id, sizeof r.id, f, n);
+      nextField(val, stop, f, n);
+      copyValue(r.name, sizeof r.name, f, n);
+    }
+    s = end ? end + 1 : nullptr;
+  }
+  return out.count > 0;
 }
 
 // ---------- link and sound ----------

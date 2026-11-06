@@ -12,6 +12,18 @@ const char* SAMPLE =
     "z Buchanskyi|yellow|5|1999980000|45|DRONES|\n"
     "z Fastivskyi|alert|3|1999995000|50||\n";
 
+// Kyiv's zones as the bridge lists them, in its order.
+const std::string KYIV_LIST =
+    "obl 14\nn Kyiv|KYIV|c\nn Bilotserkivskyi|BILOTSERK|r\nn Boryspilskyi|BORYSPIL|r\nn Brovarskyi|BROVAR|r\n"
+    "n Buchanskyi|BUCHAN|r\nn Fastivskyi|FASTIV|r\nn Obukhivskyi|OBUKHIV|r\nn Vyshhorodskyi|VYSHHOROD|r\n"
+    "n Kyivska oblast|OBLAST|o\n";
+const int ZONE_KYIV = 0, ZONE_OBLAST = 8;
+const unsigned KYIV_ONLY = 1u << ZONE_KYIV;
+static ZoneList K;
+
+bool parse(const char* body, Feed& f) { return parseFeed((KYIV_LIST + body).c_str(), f); }
+bool parseHist(const char* body, unsigned mask, History& h) { return parseHistory((KYIV_LIST + body).c_str(), mask, h); }
+
 View viewOf(Level level, long seq) {
   View v{};
   v.level = level;
@@ -21,7 +33,11 @@ View viewOf(Level level, long seq) {
 
 int main() {
   static Feed f;
-  assert(parseFeed(SAMPLE, f));
+  assert(parse("ts 1\nlevel none\n", f) && f.list.count == 9 && !strcmp(f.obl, "14"));
+  K = f.list;
+  assert(!strcmp(K.zones[ZONE_OBLAST].name, "Kyivska oblast") && K.zones[ZONE_OBLAST].kind == 'o' && !strcmp(K.zones[4].label, "BUCHAN"));
+  assert(watchedCount(K, KYIV_ONLY | (1u << 4)) == 2 && watchedCount(K, DEFAULT_ZONES) == 9);
+  assert(parse(SAMPLE, f));
   assert(f.ts == 2000000000LL && f.seq == 7 && f.botOk && f.count == 3);
   const ZoneAlert& k = f.zones[0];
   assert(!strcmp(k.name, "Kyiv") && k.level == L_RED && k.seq == 7 && k.since == 1999990000LL && k.conf == 90);
@@ -29,81 +45,84 @@ int main() {
   assert(f.zones[2].level == L_ALERT && f.zones[2].threats[0] == 0 && f.zones[2].direction[0] == 0);
 
   // Quiet state, as the bridge writes it
-  assert(parseFeed("ts 5\nseq 0\nlevel none\nbot 1\nzone \nthreat \n", f));
+  assert(parse("ts 5\nseq 0\nlevel none\nbot 1\nzone \nthreat \n", f));
   assert(f.count == 0);
 
   // Not our file (an HTML error page, an empty answer, no level)
-  assert(!parseFeed("<html>level red</html>", f));
-  assert(!parseFeed("", f));
-  assert(!parseFeed("ts 5\nseq 1\n", f));
+  assert(!parse("<html>level red</html>", f));
+  assert(!parse("", f));
+  assert(!parse("ts 5\nseq 1\n", f));
 
   // An unknown level is loud, and a long value is cut, never overflows
-  assert(parseFeed("ts 1\nlevel none\nz a-name-much-longer-than-the-twenty-four-byte-field|purple|1|1|1|x|y\n", f));
+  assert(parse("ts 1\nlevel none\nz a-name-much-longer-than-the-twenty-four-byte-field|purple|1|1|1|x|y\n", f));
   assert(f.zones[0].level == L_UNKNOWN && strlen(f.zones[0].name) == ZONE_NAME - 1);
-  assert(parseFeed("ts 1\r\nlevel none\r\nz Kyiv|yellow|1|2|3|DRONES|Kyiv\r\n", f));
+  assert(parse("ts 1\r\nlevel none\r\nz Kyiv|yellow|1|2|3|DRONES|Kyiv\r\n", f));
   assert(f.zones[0].level == L_YELLOW && !strcmp(f.zones[0].direction, "Kyiv"));
 
   // More zones than fit: no overflow, and the worst stay because the bridge sorts them first
   std::string many = "ts 1\nlevel red\n";
   for (int i = 0; i < MAX_ZONES + 5; i++) many += "z Z" + std::to_string(i) + "|red|1|1|1||\n";
-  assert(parseFeed(many.c_str(), f) && f.count == MAX_ZONES);
+  assert(parse(many.c_str(), f) && f.count == MAX_ZONES);
 
   // An older bridge with no zone lines still rings, whatever is selected
-  assert(parseFeed("ts 1\nseq 4\nlevel red\nzone Kyiv +1\nthreat DRONES\n", f));
-  View old = computeView(f, DEFAULT_ZONES);
+  assert(parse("ts 1\nseq 4\nlevel red\nzone Kyiv +1\nthreat DRONES\n", f));
+  View old = computeView(f, KYIV_ONLY);
   assert(f.count == 1 && old.level == L_RED && old.seq == 4 && !strcmp(old.threats, "DRONES"));
 
+  // A file with no zone list: nothing is known, so everything counts
+  assert(parseFeed("ts 1\nlevel red\nz Buchanskyi|red|1|1|1||\n", f) && f.list.count == 0 && computeView(f, KYIV_ONLY).level == L_RED);
+
   // Choosing zones
-  assert(zoneIndex("Kyiv") == ZONE_KYIV && zoneIndex("Kyivska oblast") == ZONE_OBLAST && zoneIndex("Mars") == -1);
-  assert(zoneWanted(ZONE_KYIV, DEFAULT_ZONES) && !zoneWanted(zoneIndex("Buchanskyi"), DEFAULT_ZONES));
-  assert(zoneWanted(-1, 0));                                   // unknown zones always count
-  assert(!zoneWanted(ZONE_OBLAST, DEFAULT_ZONES));             // Kyiv is not part of the oblast's raions
-  unsigned bucha = 1u << zoneIndex("Buchanskyi");
-  assert(zoneWanted(ZONE_OBLAST, bucha) && !zoneWanted(ZONE_KYIV, bucha));
-  assert(zoneWanted(ZONE_OBLAST, 1u << ZONE_OBLAST) && !zoneWanted(zoneIndex("Buchanskyi"), 1u << ZONE_OBLAST));
+  assert(zoneIndex(K, "Kyiv") == ZONE_KYIV && zoneIndex(K, "Kyivska oblast") == ZONE_OBLAST && zoneIndex(K, "Mars") == -1);
+  assert(zoneWanted(K, ZONE_KYIV, KYIV_ONLY) && !zoneWanted(K, zoneIndex(K, "Buchanskyi"), KYIV_ONLY));
+  assert(zoneWanted(K, -1, 0));                                   // unknown zones always count
+  assert(!zoneWanted(K, ZONE_OBLAST, KYIV_ONLY));             // Kyiv is not part of the oblast's raions
+  unsigned bucha = 1u << zoneIndex(K, "Buchanskyi");
+  assert(zoneWanted(K, ZONE_OBLAST, bucha) && !zoneWanted(K, ZONE_KYIV, bucha));
+  assert(zoneWanted(K, ZONE_OBLAST, 1u << ZONE_OBLAST) && !zoneWanted(K, zoneIndex(K, "Buchanskyi"), 1u << ZONE_OBLAST));
 
   // The view only adds up what is watched
-  parseFeed(SAMPLE, f);
-  View v = computeView(f, DEFAULT_ZONES);
+  parse(SAMPLE, f);
+  View v = computeView(f, KYIV_ONLY);
   assert(v.level == L_RED && v.seq == 7 && v.count == 1 && !strcmp(v.zone, "Kyiv") && v.since == 1999990000LL);
   assert(!strcmp(v.threats, "BALLISTIC, DRONES"));
   v = computeView(f, bucha);
   assert(v.level == L_YELLOW && v.seq == 5 && !strcmp(v.zone, "Buchanskyi") && !strcmp(v.threats, "DRONES"));
-  v = computeView(f, DEFAULT_ZONES | bucha);
+  v = computeView(f, KYIV_ONLY | bucha);
   assert(v.level == L_RED && v.count == 2 && !strcmp(v.zone, "Kyiv +1") && v.since == 1999980000LL);
-  v = computeView(f, 1u << zoneIndex("Brovarskyi"));
+  v = computeView(f, 1u << zoneIndex(K, "Brovarskyi"));
   assert(v.level == L_NONE && v.count == 0 && v.zone[0] == 0);
 
   // Heading for a watched zone counts, with its direction's seq; the zone's own watchers go by its own seq
-  assert(parseFeed("ts 1\nlevel yellow\nz Buchanskyi|yellow|5|100|45|DRONES|Kyiv|9\n", f));
-  v = computeView(f, DEFAULT_ZONES);
+  assert(parse("ts 1\nlevel yellow\nz Buchanskyi|yellow|5|100|45|DRONES|Kyiv|9\n", f));
+  v = computeView(f, KYIV_ONLY);
   assert(v.level == L_YELLOW && v.seq == 9 && !strcmp(v.zone, "Buchanskyi to Kyiv"));
   v = computeView(f, bucha);
   assert(v.seq == 5 && !strcmp(v.zone, "Buchanskyi"));
-  v = computeView(f, 1u << zoneIndex("Brovarskyi"));
+  v = computeView(f, 1u << zoneIndex(K, "Brovarskyi"));
   assert(v.level == L_NONE);
-  assert(headsToWatched("Kyiv, Buchanskyi r-n", bucha) && headsToWatched("Kyiv", DEFAULT_ZONES));
-  assert(!headsToWatched("Kyivska oblast", DEFAULT_ZONES) && !headsToWatched("", DEFAULT_ZONES));
-  assert(headsToWatched("Kyivska oblast", 1u << ZONE_OBLAST));
-  assert(parseFeed("ts 1\nlevel yellow\nz Buchanskyi|yellow|5|100|45|DRONES|Kyiv\n", f));  // no direction seq yet
-  assert(computeView(f, DEFAULT_ZONES).seq == 5);
+  assert(headsToWatched("Kyiv, Buchanskyi r-n", K, bucha) && headsToWatched("Kyiv", K, KYIV_ONLY));
+  assert(!headsToWatched("Kyivska oblast", K, KYIV_ONLY) && !headsToWatched("", K, KYIV_ONLY));
+  assert(headsToWatched("Kyivska oblast", K, 1u << ZONE_OBLAST));
+  assert(parse("ts 1\nlevel yellow\nz Buchanskyi|yellow|5|100|45|DRONES|Kyiv\n", f));  // no direction seq yet
+  assert(computeView(f, KYIV_ONLY).seq == 5);
 
   // Ballistic has its own alarm, whichever zone brings it, also at night
-  assert(parseFeed("ts 1\nlevel red\nz Kyiv|red|4|1|90|CRUISE,BALLISTIC|\n", f));
-  v = computeView(f, DEFAULT_ZONES);
+  assert(parse("ts 1\nlevel red\nz Kyiv|red|4|1|90|CRUISE,BALLISTIC|\n", f));
+  v = computeView(f, KYIV_ONLY);
   assert(v.ballistic && wantedSound(FRESH, true, v, LINK_OK, false) == S_BALLISTIC);
   assert(wantedSound(FRESH, true, v, LINK_OK, true) == S_BALLISTIC);
-  assert(parseFeed("ts 1\nlevel red\nz Kyiv|red|4|1|90|CRUISE|\n", f) && !computeView(f, DEFAULT_ZONES).ballistic);
+  assert(parse("ts 1\nlevel red\nz Kyiv|red|4|1|90|CRUISE|\n", f) && !computeView(f, KYIV_ONLY).ballistic);
 
   // An alert that may be over: shown, silent, no new ring, and no all-clear when it ends
-  assert(parseFeed("ts 1\nlevel lost\nz Kyiv|lost|8|1|90|DRONES|\n", f));
-  v = computeView(f, DEFAULT_ZONES);
+  assert(parse("ts 1\nlevel lost\nz Kyiv|lost|8|1|90|DRONES|\n", f));
+  v = computeView(f, KYIV_ONLY);
   assert(v.level == L_LOST && v.seq == 0 && !strcmp(v.zone, "Kyiv"));
   assert(wantedSound(FRESH, true, v, LINK_OK, false) == S_NONE);
   assert(!becameClear(L_LOST, L_NONE) && !remindDue(L_LOST, false, REMIND_EVERY_MS));
   // ...but it does not hide a real alert next to it
-  assert(parseFeed("ts 1\nlevel red\nz Kyiv|red|3|1|90|DRONES|\nz Fastivskyi|lost|8|1|90||\n", f));
-  v = computeView(f, DEFAULT_ZONES | (1u << zoneIndex("Fastivskyi")));
+  assert(parse("ts 1\nlevel red\nz Kyiv|red|3|1|90|DRONES|\nz Fastivskyi|lost|8|1|90||\n", f));
+  v = computeView(f, KYIV_ONLY | (1u << zoneIndex(K, "Fastivskyi")));
   assert(v.level == L_RED && v.seq == 3);
 
   // Reminders of a silenced alert, not at night
@@ -111,7 +130,7 @@ int main() {
   assert(!remindDue(L_RED, true, REMIND_EVERY_MS) && !remindDue(L_NONE, false, REMIND_EVERY_MS));
 
   // The delay is measured from the time the bridge reports
-  assert(parseFeed("ts 1\nseq 2\nmsg 1999\nlevel none\n", f) && f.msgTs == 1999);
+  assert(parse("ts 1\nseq 2\nmsg 1999\nlevel none\n", f) && f.msgTs == 1999);
 
   // The title says only what is known
   View t{};
@@ -144,15 +163,22 @@ int main() {
   const char* HIST =
       "ts 100\nh 90|Kyiv|red|BALLISTIC,DRONES\nh 80|Buchanskyi|yellow|DRONES\nh 70|Kyiv|none|\n"
       "s Buchanskyi|1|5|2|50\ns Kyiv|2|95|9|600\n";
-  assert(parseHistory(HIST, DEFAULT_ZONES, h));
+  assert(parseHist(HIST, KYIV_ONLY, h));
   assert(h.eventCount == 2 && h.events[0].ts == 90 && h.events[0].level == L_RED && h.events[1].level == L_NONE);
   assert(h.statCount == 1 && !strcmp(h.stats[0].zone, "Kyiv") && h.stats[0].todayCount == 2);
   assert(h.stats[0].todayMin == 95 && h.stats[0].weekCount == 9 && h.stats[0].weekMin == 600);
-  assert(parseHistory(HIST, DEFAULT_ZONES | bucha, h) && h.eventCount == 3 && h.statCount == 2);
-  assert(!parseHistory("<html>", DEFAULT_ZONES, h));
+  assert(parseHist(HIST, KYIV_ONLY | bucha, h) && h.eventCount == 3 && h.statCount == 2);
+  assert(!parseHist("<html>", KYIV_ONLY, h));
   std::string longHist = "ts 1\n";
   for (int i = 0; i < MAX_EVENTS + 9; i++) longHist += "h 5|Kyiv|red|\n";
-  assert(parseHistory(longHist.c_str(), DEFAULT_ZONES, h) && h.eventCount == MAX_EVENTS);
+  assert(parseHist(longHist.c_str(), KYIV_ONLY, h) && h.eventCount == MAX_EVENTS);
+
+  // The list of oblasts
+  static RegionList rl;
+  assert(parseRegions("r 24|Cherkaska\nr 14|Kyivska\nr 9999|Krym\n", rl) && rl.count == 3);
+  assert(!strcmp(rl.regions[1].id, "14") && !strcmp(rl.regions[1].name, "Kyivska"));
+  assert(!parseRegions("<html>", rl) && !parseRegions("", rl));
+  assert(parseHist("ts 1\n", KYIV_ONLY, h) && !strcmp(h.obl, "14"));
 
   // Link states
   static Feed good;

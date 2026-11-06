@@ -31,6 +31,8 @@ jobs:
           g++ -std=c++17 -I src test/test_alert.cpp -o test-alert && ./test-alert
           python test/test_bridge.py
       - name: Firmware
+        env:  # the stick shows it in Settings
+          PLATFORMIO_BUILD_FLAGS: -DVERSION='"${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}"'
         run: |
           pio run
           B=.pio/build/stickcplus2
@@ -41,7 +43,7 @@ jobs:
             0x1000 $B/bootloader.bin 0x8000 $B/partitions.bin \
             0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
             0x10000 $B/firmware.bin
-          tar -C vps -czf out/server.tar.gz peace_bridge.py peace-stick-bridge.service install.sh add-caddy-routes.sh \
+          tar -C vps -czf out/server.tar.gz peace_bridge.py regions.json peace-stick-bridge.service install.sh add-caddy-routes.sh \
             update.sh vartovyi-update.service vartovyi-update.timer webhook-public.pem
       - uses: actions/upload-artifact@v4
         with:

@@ -15,6 +15,9 @@
 #ifndef ALERT_URL
 #define ALERT_URL "https://62.238.111.55.nip.io/peace-stick"
 #endif
+#ifndef VERSION
+#define VERSION "dev"  // a release gets its tag from the build
+#endif
 // Optional: src/secrets.h with WIFI_SSID and WIFI_PASS seeds the first network. Without it the stick opens phone setup.
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -66,11 +69,12 @@ const Step BALLISTIC[] = {{3700, 110}, {2300, 110}};
 
 enum Page { P_HOME, P_MAP, P_DETAILS, P_HISTORY, P_STATS, P_SETTINGS, PAGE_COUNT };
 const char* const PAGE_NAMES[] = {"VARTOVYI", "MAP", "ACTIVE", "HISTORY", "STATS", "SETTINGS"};
-enum Menu { M_NONE, M_MAIN, M_ZONES };
-enum MenuItem { MI_ZONES, MI_NIGHT, MI_FLIP, MI_POWER, MI_BRIGHT, MI_VOLUME, MI_TEST, MI_SETUP, MI_UPDATE, MI_NETWORK, MI_DELAY, MI_BACK, MI_COUNT };
+enum Menu { M_NONE, M_MAIN, M_ZONES, M_REGIONS };
+enum MenuItem { MI_REGION, MI_ZONES, MI_NIGHT, MI_FLIP, MI_POWER, MI_BRIGHT, MI_VOLUME, MI_TEST, MI_SETUP, MI_UPDATE, MI_NETWORK, MI_DELAY, MI_BACK, MI_COUNT };
 enum PowerMode { POWER_AUTO, POWER_NORMAL, POWER_SAVER };
 
 struct Settings {
+  char oblast[REGION_ID] = "14", oblastName[ZONE_NAME] = "Kyivska";  // Kyiv, where the first firmware lived
   unsigned zones = DEFAULT_ZONES;
   bool nightOn = true, flip = true;
   int nightStart = 23, nightEnd = 7;
@@ -82,13 +86,16 @@ struct Net {
 };
 
 M5Canvas canvas(&M5.Display);  // draw off screen, so a fast flash does not tear
-QueueHandle_t results, historyResults;
+QueueHandle_t results, historyResults, regionResults;
 SemaphoreHandle_t poolLock;
 Preferences prefs;
 WebServer server(80);
 DNSServer dns;
 
 Settings cfg;
+char oblastNow[REGION_ID] = "14";  // the fetch task's copy of cfg.oblast, under poolLock
+RegionList regions;                // the oblasts to choose from, once the server sent them
+volatile bool regionsWanted = true;
 Net pool[MAX_NETS];
 int poolCount = 0;
 
@@ -137,7 +144,16 @@ void savePool() {
   }
 }
 
+void shareOblast() {
+  xSemaphoreTake(poolLock, portMAX_DELAY);
+  strcpy(oblastNow, cfg.oblast);
+  xSemaphoreGive(poolLock);
+}
+
 void saveSettings() {
+  prefs.putString("obl", cfg.oblast);
+  prefs.putString("oblName", cfg.oblastName);
+  shareOblast();
   prefs.putUInt("zones", cfg.zones);
   prefs.putBool("night", cfg.nightOn);
   prefs.putBool("flip", cfg.flip);
@@ -151,6 +167,9 @@ void saveSettings() {
 
 void loadSettings() {
   prefs.begin("peace", false);
+  prefs.getString("obl", cfg.oblast, sizeof cfg.oblast);  // an older firmware saved none: Kyiv stays
+  prefs.getString("oblName", cfg.oblastName, sizeof cfg.oblastName);
+  shareOblast();
   cfg.zones = prefs.getUInt("zones", DEFAULT_ZONES);
   cfg.nightOn = prefs.getBool("night", true);
   cfg.flip = prefs.getBool("flip", true);
@@ -280,8 +299,11 @@ void fetchTask(void*) {
     unsigned long start = millis();
     connectStep();
     if (WiFi.status() == WL_CONNECTED && timeIsSynced(time(nullptr))) {
-      String body;
-      r.code = fetchText(ALERT_URL, body);
+      String body, base;
+      xSemaphoreTake(poolLock, portMAX_DELAY);
+      base = String(ALERT_URL "/v2/") + oblastNow;
+      xSemaphoreGive(poolLock);
+      r.code = fetchText((base + ".txt").c_str(), body);
       if (r.code == 200 && !parseFeed(body.c_str(), r.feed)) r.code = -100;  // answered, but not our file
       xQueueOverwrite(results, &r);
       if (updateWanted) {
@@ -290,9 +312,16 @@ void fetchTask(void*) {
       }
       if (historyWanted) {
         historyWanted = false;
-        h.code = fetchText(ALERT_URL "/history", body);
+        h.code = fetchText((base + "-history.txt").c_str(), body);
         if (h.code == 200 && !parseHistory(body.c_str(), maskNow, h.history)) h.code = -100;
         xQueueOverwrite(historyResults, &h);
+      }
+      if (regionsWanted) {  // once: the list changes only with a new release of the bridge
+        static RegionList rl;
+        if (fetchText(ALERT_URL "/v2/regions.txt", body) == 200 && parseRegions(body.c_str(), rl)) {
+          regionsWanted = false;
+          xQueueOverwrite(regionResults, &rl);
+        }
       }
     }
     unsigned long wait = saverNow ? POLL_SAVER_MS : POLL_MS, took = millis() - start;
@@ -350,9 +379,16 @@ String setupPage(const String& message) {
     h += F("</datalist><input type=password name=pass maxlength=63 placeholder='Password'><button>Add network</button></form>"
            "<p class=tip>iPhone hotspot: turn on Maximize Compatibility, and keep the Personal Hotspot screen open while the stick connects.</p>");
   }
-  h += F("</section><section><h2>Alert zones</h2><p class=tip>Zones heading for one you watch ring too.</p><form method=post action=/zones>");
-  for (int i = 0; i < ZONE_COUNT; i++) {
-    h += "<label><input type=checkbox name=z" + String(i) + (cfg.zones & (1u << i) ? " checked>" : ">") + KNOWN_ZONES[i].name + "</label>";
+  h += F("</section><section><h2>Oblast</h2><form method=post action=/region><select name=r aria-label=Oblast>");
+  if (!regions.count) h += "<option value=" + String(cfg.oblast) + ">" + htmlEscape(cfg.oblastName) + "</option>";
+  for (int i = 0; i < regions.count; i++) {
+    const Region& r = regions.regions[i];
+    h += "<option value=" + String(r.id) + (strcmp(r.id, cfg.oblast) ? ">" : " selected>") + htmlEscape(r.name) + "</option>";
+  }
+  h += F("</select><button>Save oblast</button></form></section><section><h2>Alert zones</h2><form method=post action=/zones>");
+  if (!feed.list.count) h += F("<p class=tip>Loading the zones of this oblast: reload the page in a few seconds.</p>");
+  for (int i = 0; i < feed.list.count; i++) {
+    h += "<label><input type=checkbox name=z" + String(i) + (cfg.zones & (1u << i) ? " checked>" : ">") + htmlEscape(feed.list.zones[i].name) + "</label>";
   }
   h += F("<p class=tip>Watching any raion also includes alerts for the whole oblast.</p><button>Save zones</button></form></section>"
          "<section><h2>Night mode</h2><form method=post action=/night><label><input type=checkbox name=on");
@@ -372,7 +408,7 @@ String setupPage(const String& message) {
     h += F("</select>");
   }
   h += F("<button>Save</button></form></section>"
-         "<form method=post action=/done><button class=s>Close setup</button></form></body></html>");
+         "<form method=post action=/done><button class=s>Close setup</button></form><p class=tip>Vartovyi " VERSION "</p></body></html>");
   return h;
 }
 
@@ -419,9 +455,31 @@ void changeNetwork() {
   showPage("Network list updated.");
 }
 
+void chooseOblast(const Region& r) {
+  if (!strcmp(r.id, cfg.oblast)) return;
+  strcpy(cfg.oblast, r.id);
+  strcpy(cfg.oblastName, r.name);
+  cfg.zones = DEFAULT_ZONES;
+  saveSettings();
+  feed = Feed{};  // the old oblast's zones and choices mean nothing here
+  hasData = historyLoaded = false;
+  ringer.ackedSeq = NEVER_ACKED;  // an alert already on in the new oblast rings
+  lastDraw = 0;
+}
+
+void saveRegion() {
+  String id = server.arg("r");
+  for (int i = 0; i < regions.count; i++)
+    if (id == regions.regions[i].id) {
+      chooseOblast(regions.regions[i]);
+      return showPage("Oblast saved. Its zones appear below in a few seconds: reload the page.");
+    }
+  showPage("Unknown oblast.");
+}
+
 void saveZones() {
   unsigned mask = 0;
-  for (int i = 0; i < ZONE_COUNT; i++)
+  for (int i = 0; i < feed.list.count; i++)
     if (server.hasArg("z" + String(i))) mask |= 1u << i;
   if (!mask) return showPage("Keep at least one zone, or the stick would never ring.");
   cfg.zones = mask;
@@ -455,6 +513,7 @@ void setupRoutes() {
   server.on("/add", HTTP_POST, addNetwork);
   server.on("/net", HTTP_POST, changeNetwork);
   server.on("/zones", HTTP_POST, saveZones);
+  server.on("/region", HTTP_POST, saveRegion);
   server.on("/night", HTTP_POST, saveNight);
   server.on("/done", HTTP_POST, [] {
     server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=viewport content='width=device-width'><body style='background:#0d1117;color:#ecf0f5;font:18px system-ui;padding:24px'>Setup closed. You can leave this network.");
@@ -646,12 +705,13 @@ void drawHome(Link link, long long now) {
   d.setTextColor(C_TEXT);
   d.drawString(clock, d.width() / 2, 52);
   drawSmall("ALL CLEAR", d.width() / 2, 84, middle_center, C_GREEN);
-  int watched = 0;
-  for (int i = 0; i < ZONE_COUNT; i++) watched += (cfg.zones >> i) & 1;
+  int watched = watchedCount(feed.list, cfg.zones);
   char line[36];
   if (watched == 1) {
-    for (int i = 0; i < ZONE_COUNT; i++)
-      if (cfg.zones & (1u << i)) snprintf(line, sizeof line, "Watching %s", KNOWN_ZONES[i].name);
+    for (int i = 0; i < feed.list.count; i++)
+      if (cfg.zones & (1u << i)) snprintf(line, sizeof line, "Watching %s", feed.list.zones[i].name);
+  } else if (!feed.list.count || watched == feed.list.count) {
+    snprintf(line, sizeof line, "Watching %s", cfg.oblastName);
   } else {
     snprintf(line, sizeof line, "Watching %d zones", watched);
   }
@@ -664,24 +724,27 @@ void drawHome(Link link, long long now) {
 
 const ZoneAlert* zoneAlert(int index) {
   for (int i = 0; i < feed.count; i++)
-    if (feed.zones[i].level != L_NONE && zoneIndex(feed.zones[i].name) == index) return &feed.zones[i];
+    if (feed.zones[i].level != L_NONE && zoneIndex(feed.list, feed.zones[i].name) == index) return &feed.zones[i];
   return nullptr;
 }
 
-// The oblast drawn as tiles in roughly their real places. Watched zones fill with the alert's colour,
+// The oblast's zones as tiles, city first and the oblast itself last. Watched zones fill with the alert's colour,
 // the others only get an outline.
 void drawMap(Link link) {
-  static const struct { int zone, col, row, span; } TILES[] = {
-      {1, 0, 0, 2}, {8, 2, 0, 1}, {2, 0, 1, 1}, {0, 1, 1, 1}, {3, 2, 1, 1},
-      {4, 0, 2, 1}, {5, 1, 2, 1}, {6, 2, 2, 1}, {7, 0, 3, 2},
-  };
   auto& d = canvas;
   drawHeader(linkDot(link));
-  const int X = 5, Y = 25, TW = 74, TH = 25, GAP = 4;
-  for (auto& tile : TILES) {
-    int x = X + tile.col * (TW + GAP), y = Y + tile.row * (TH + GAP), w = tile.span * TW + (tile.span - 1) * GAP;
-    const ZoneAlert* a = zoneAlert(tile.zone);
-    bool wanted = zoneWanted(tile.zone, cfg.zones);
+  const ZoneList& l = feed.list;
+  if (!l.count) {
+    drawFitted("Loading...", 72, C_MUTED);
+    return;
+  }
+  const int X = 5, Y = 25, COLS = 3, TW = 74, GAP = 4;
+  int rows = (l.count + 1 + COLS - 1) / COLS;  // one more cell counts the active zones
+  int TH = min(25, (d.height() - Y - 2 - (rows - 1) * GAP) / rows);
+  for (int i = 0; i < l.count; i++) {
+    int x = X + i % COLS * (TW + GAP), y = Y + i / COLS * (TH + GAP), w = TW;
+    const ZoneAlert* a = zoneAlert(i);
+    bool wanted = zoneWanted(l, i, cfg.zones);
     uint16_t text = wanted ? C_TEXT : C_MUTED;
     if (a && wanted) {
       d.fillRoundRect(x, y, w, TH, 5, levelColor(a->level));
@@ -691,11 +754,16 @@ void drawMap(Link link) {
       if (a) d.drawRoundRect(x, y, w, TH, 5, levelColor(a->level));
       else if (wanted) d.drawRoundRect(x, y, w, TH, 5, C_LINE);
     }
-    drawSmall(KNOWN_ZONES[tile.zone].label, x + w / 2, y + TH / 2, middle_center, text);
+    d.setFont(&fonts::Font2);
+    if (d.textWidth(l.zones[i].label) > w - 4) d.setFont(&fonts::Font0);  // BILOTSERK and the like
+    d.setTextDatum(middle_center);
+    d.setTextColor(text);
+    d.drawString(l.zones[i].label, x + w / 2, y + TH / 2);
   }
   char line[20];
-  snprintf(line, sizeof line, feed.count == 1 ? "1 zone active" : "%d zones active", feed.count);
-  drawSmall(line, X + 2 * (TW + GAP) + TW / 2, Y + 3 * (TH + GAP) + TH / 2, middle_center, feed.count ? C_AMBER : C_MUTED);
+  snprintf(line, sizeof line, feed.count == 1 ? "1 active" : "%d active", feed.count);
+  drawSmall(line, X + l.count % COLS * (TW + GAP) + TW / 2, Y + l.count / COLS * (TH + GAP) + TH / 2, middle_center,
+            feed.count ? C_AMBER : C_MUTED);
 }
 
 void drawDetails(Link link, long long now) {
@@ -704,7 +772,7 @@ void drawDetails(Link link, long long now) {
   const ZoneAlert* shown[MAX_ZONES];
   int count = 0;
   for (int i = 0; i < feed.count; i++)
-    if (zoneMatters(feed.zones[i], cfg.zones)) shown[count++] = &feed.zones[i];
+    if (zoneMatters(feed.zones[i], feed.list, cfg.zones)) shown[count++] = &feed.zones[i];
   if (!count) {
     drawFitted("No active alerts", 72, C_MUTED);
     return;
@@ -776,13 +844,14 @@ void drawStats(Link link) {
 void menuText(int item, char* left, char* right, size_t size) {
   right[0] = 0;
   switch (item) {
-    case MI_ZONES: {
-      int watched = 0;
-      for (int i = 0; i < ZONE_COUNT; i++) watched += (cfg.zones >> i) & 1;
-      snprintf(left, size, "Zones");
-      snprintf(right, size, "%d", watched);
+    case MI_REGION:
+      snprintf(left, size, "Oblast");
+      snprintf(right, size, "%s", cfg.oblastName);
       break;
-    }
+    case MI_ZONES:
+      snprintf(left, size, "Zones");
+      snprintf(right, size, "%d of %d", watchedCount(feed.list, cfg.zones), feed.list.count);
+      break;
     case MI_NIGHT:
       snprintf(left, size, "Night mode");
       if (cfg.nightOn) snprintf(right, size, "%02d-%02d", cfg.nightStart, cfg.nightEnd);
@@ -809,7 +878,7 @@ void menuText(int item, char* left, char* right, size_t size) {
     case MI_UPDATE:
       snprintf(left, size, "Update firmware");
       if (updatePercent >= 0) snprintf(right, size, "%d%%", updatePercent);
-      else snprintf(right, size, "%s", updateStatus);
+      else snprintf(right, size, "%s", *updateStatus ? updateStatus : VERSION);
       break;
     case MI_DELAY:
       snprintf(left, size, "Last delay");
@@ -837,17 +906,17 @@ void drawRow(int r, const char* left, const char* right, bool selected) {
 void drawSettings(Link link) {
   drawHeader(linkDot(link));
   const int ROWS = menu == M_NONE ? 4 : 5;  // closed, the last row tells how to open it
-  int count = menu == M_ZONES ? ZONE_COUNT + 1 : MI_COUNT;
+  int count = menu == M_ZONES ? feed.list.count + 1 : menu == M_REGIONS ? regions.count + 1 : MI_COUNT;
   int top = menuIndex < ROWS ? 0 : menuIndex - ROWS + 1;
   char left[32], right[32];
   for (int r = 0; r < ROWS && top + r < count; r++) {
     int i = top + r;
-    if (menu == M_ZONES) {
-      if (i == ZONE_COUNT) {
-        drawRow(r, "Back", "", i == menuIndex);
-      } else {
-        drawRow(r, KNOWN_ZONES[i].name, cfg.zones & (1u << i) ? "On" : "Off", i == menuIndex);
-      }
+    if (i == count - 1 && (menu == M_ZONES || menu == M_REGIONS)) {
+      drawRow(r, "Back", "", i == menuIndex);
+    } else if (menu == M_ZONES) {
+      drawRow(r, feed.list.zones[i].name, cfg.zones & (1u << i) ? "On" : "Off", i == menuIndex);
+    } else if (menu == M_REGIONS) {
+      drawRow(r, regions.regions[i].name, strcmp(regions.regions[i].id, cfg.oblast) ? "" : "On", i == menuIndex);
     } else {
       menuText(i, left, right, sizeof left);
       drawRow(r, left, right, menu == M_MAIN && i == menuIndex);
@@ -903,7 +972,7 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
     drawAlarm(linkTitle(link), "Alerts may be missed", "", "press any button to silence", C_ORANGE, on);
   } else if (alarm) {
     if (view.since && timeIsSynced(now)) formatTimer(now - view.since, timer, sizeof timer);
-    drawAlarm(viewTitle(view), view.zone[0] ? view.zone : "Kyiv area", view.threats[0] ? view.threats : timer,
+    drawAlarm(viewTitle(view), view.zone[0] ? view.zone : cfg.oblastName, view.threats[0] ? view.threats : timer,
               "press any button to silence", levelColor(view.level), on);
   } else if (portalOn) {
     drawPortal();
@@ -972,6 +1041,12 @@ bool playSound(Sound s, unsigned long t) {
 
 void activateMenuItem(unsigned long t) {
   switch (menuIndex) {
+    case MI_REGION:
+      menu = M_REGIONS;
+      menuIndex = 0;
+      for (int i = 0; i < regions.count; i++)
+        if (!strcmp(regions.regions[i].id, cfg.oblast)) menuIndex = i;
+      break;
     case MI_ZONES: menu = M_ZONES; menuIndex = 0; break;
     case MI_NIGHT: cfg.nightOn = !cfg.nightOn; saveSettings(); break;
     case MI_FLIP: cfg.flip = !cfg.flip; saveSettings(); break;
@@ -1011,14 +1086,19 @@ void handleButtons(bool a, bool b, bool c, unsigned long t) {
     if (move) menuIndex = stepIndex(menuIndex, MI_COUNT, move);
     else if (a) activateMenuItem(t);
   } else {
+    int count = menu == M_ZONES ? feed.list.count : regions.count;  // then Back
     if (move) {
-      menuIndex = stepIndex(menuIndex, ZONE_COUNT + 1, move);
-    } else if (a && menuIndex == ZONE_COUNT) {
+      menuIndex = stepIndex(menuIndex, count + 1, move);
+    } else if (a && menuIndex >= count) {
+      menuIndex = menu == M_ZONES ? MI_ZONES : MI_REGION;
       menu = M_MAIN;
-      menuIndex = MI_ZONES;
+    } else if (a && menu == M_REGIONS) {
+      chooseOblast(regions.regions[menuIndex]);
+      menu = M_MAIN;
+      menuIndex = MI_REGION;
     } else if (a) {
       unsigned next = cfg.zones ^ (1u << menuIndex);
-      if (next) {  // at least one zone stays: a stick that watches nothing would look fine and never ring
+      if (watchedCount(feed.list, next)) {  // at least one zone stays: a stick that watches nothing would look fine and never ring
         cfg.zones = next;
         saveSettings();
         historyLoaded = false;
@@ -1045,9 +1125,10 @@ void applyResult(const FetchResult& r, unsigned long t) {
     prefs.putBool("trial", false);
     Serial.println("new firmware confirmed");
   }
+  lastGood = t;
+  if (strcmp(r.feed.obl, cfg.oblast)) return;  // fetched just before the oblast changed
   feed = r.feed;
   hasData = true;
-  lastGood = t;
   if (changed) Serial.printf("seq %ld, %d zone(s) active, min heap %u\n", feed.seq, feed.count, ESP.getMinFreeHeap());
 }
 
@@ -1074,6 +1155,7 @@ void setup() {
   setupRoutes();
   results = xQueueCreate(1, sizeof(FetchResult));
   historyResults = xQueueCreate(1, sizeof(HistoryResult));
+  regionResults = xQueueCreate(1, sizeof(RegionList));
   // Core 1 like loop(): a TLS handshake on core 0 starves its idle task and the watchdog reboots the chip.
   xTaskCreatePinnedToCore(fetchTask, "fetch", 12288, nullptr, 1, nullptr, 1);
 }
@@ -1113,8 +1195,10 @@ void loop() {
       chimePending = true;
     }
   }
+  static RegionList rl;
+  if (xQueueReceive(regionResults, &rl, 0) == pdTRUE) regions = rl;
   static HistoryResult hr;
-  if (xQueueReceive(historyResults, &hr, 0) == pdTRUE) {
+  if (xQueueReceive(historyResults, &hr, 0) == pdTRUE && (hr.code != 200 || !strcmp(hr.history.obl, cfg.oblast))) {
     historyFailed = hr.code != 200;
     if (!historyFailed) history = hr.history;
     historyLoaded = true;

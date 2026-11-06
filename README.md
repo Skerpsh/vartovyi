@@ -2,7 +2,7 @@
 
 # Vartovyi
 
-**Повітряні тривоги Києва та області на [M5StickC Plus2](https://docs.m5stack.com/en/core/M5StickC%20PLUS2)**<br>
+**Повітряні тривоги вашої області на [M5StickC Plus2](https://docs.m5stack.com/en/core/M5StickC%20PLUS2)**<br>
 Сирена, кольоровий екран, історія і статистика. Офіційні дані [api.ukrainealarm.com](https://api.ukrainealarm.com).
 
 [![build](https://github.com/Skerpsh/vartovyi/actions/workflows/build.yml/badge.svg)](https://github.com/Skerpsh/vartovyi/actions/workflows/build.yml)
@@ -11,14 +11,15 @@
 
 **[Прошити стік у браузері →](https://skerpsh.github.io/vartovyi/)**
 
-<sub>Air-raid alerts for Kyiv on an M5StickC Plus2, from the official Ukrainian alert API. Flash it from the browser, set Wi-Fi from your phone.</sub>
+<sub>Air-raid alerts for any Ukrainian oblast and its raions on an M5StickC Plus2, from the official alert API. Flash it from the browser, set it up from your phone.</sub>
 
 </div>
 
 ## Можливості
 
 - Сирена при тривозі, окремий звук для балістики, тихіші сигнали для дронів і відбою.
-- Зони Києва й області на вибір, нічний режим, вимкнення звуку переворотом стіка екраном донизу.
+- Будь-яка область України: стік показує її райони, а ви вибираєте, які з них стежити.
+- Нічний режим, вимкнення звуку переворотом стіка екраном донизу.
 - Історія та статистика тривог, рівень заряду, кілька Wi-Fi мереж за пріоритетом.
 - Оновлення по Wi-Fi з автоматичним відкатом, якщо нова версія не запрацювала.
 
@@ -34,12 +35,12 @@ git clone https://github.com/Skerpsh/vartovyi && cd vartovyi
 
 ## Перший запуск
 
-Стік покаже QR-код мережі **Vartovyi**. Відскануйте його телефоном: відкриється сторінка налаштувань, де можна додати свій Wi-Fi (тільки 2,4 ГГц), вибрати зони, нічний режим, гучність і яскравість.
-Натисніть **Close setup**, і стік підключиться. Пізніше сторінка відкривається з меню: Settings > Phone setup.
+Стік покаже QR-код мережі **Vartovyi**. Відскануйте його телефоном: відкриється сторінка налаштувань, де можна додати свій Wi-Fi (тільки 2,4 ГГц), вибрати область і її райони, нічний режим, гучність і яскравість.
+Натисніть **Close setup**, і стік підключиться. Пізніше сторінка відкривається з меню: Settings > Phone setup. Область і райони можна змінити й на самому стіку: Settings > Oblast, Settings > Zones.
 
 ## Оновлення
 
-Нові версії з'являються в [Releases](https://github.com/Skerpsh/vartovyi/releases). На стіку: Settings > Update firmware.
+Нові версії з'являються в [Releases](https://github.com/Skerpsh/vartovyi/releases). На стіку: Settings > Update firmware, там же видно поточну версію.
 Якщо нова прошивка за 5 хвилин не дістане сервер, стік сам повернеться до попередньої.
 
 ## Як це працює
@@ -47,7 +48,7 @@ git clone https://github.com/Skerpsh/vartovyi && cd vartovyi
 ```
 api.ukrainealarm.com ──webhook + опитування──► міст (vps/peace_bridge.py) ──Caddy, https──► стік
 ```
-Міст отримує підписані вебхуки й раз на 65 с звіряється з повним списком тривог, а результат пише у невеликий текстовий файл. Стік читає його кожні 3 секунди.
+Міст отримує підписані вебхуки й раз на 65 с звіряється з повним списком тривог, а результат пише в невеликий текстовий файл для кожної області. Стік читає файл своєї області кожні 3 секунди.
 
 ## Свій сервер
 

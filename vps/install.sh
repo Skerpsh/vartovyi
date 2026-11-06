@@ -16,7 +16,7 @@ mv /etc/peace-stick/env.new /etc/peace-stick/env
 [ -x /opt/peace-stick/venv/bin/python ] || python3 -m venv /opt/peace-stick/venv
 /opt/peace-stick/venv/bin/pip install -q cryptography==46.0.3
 /opt/peace-stick/venv/bin/pip uninstall -q -y telethon 2>/dev/null || true
-install -m 644 peace_bridge.py /opt/peace-stick/peace_bridge.py
+install -m 644 peace_bridge.py regions.json /opt/peace-stick/
 install -m 644 peace-stick-bridge.service /etc/systemd/system/
 install -m 755 update.sh /opt/peace-stick/update.sh
 install -m 644 vartovyi-update.service vartovyi-update.timer /etc/systemd/system/
