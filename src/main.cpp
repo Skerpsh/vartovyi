@@ -32,7 +32,8 @@ const unsigned long HISTORY_EVERY_MS = 60000;
 const unsigned long FLASH_MS = 150, FLASH_FAST_MS = 80, DRAW_MS = 90, DRAW_SAVER_MS = 500;
 const unsigned long TRIAL_MS = 300000;    // a new firmware that reaches no server in this time gives way to the old one
 const int TRIAL_BOOTS = 3;
-const uint8_t BRIGHT_LEVELS[] = {30, 70, 140}, VOLUME_LEVELS[] = {90, 170, 255};
+// The Plus2 backlight never goes below about 16% (M5GFX offset 40), so the levels sit far apart: ~18%, ~49%, 100%.
+const uint8_t BRIGHT_LEVELS[] = {8, 100, 255}, VOLUME_LEVELS[] = {90, 170, 255};
 const char* const LEVEL_NAMES[] = {"Low", "Medium", "High"};
 const char* const IMPACT_NAMES[] = {"Off", "Low", "High"};
 const unsigned long CLEAR_SCREEN_MS = 5000, TEST_MS = 5000, BATTERY_EVERY_MS = 10000;
@@ -1807,7 +1808,10 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
   screenOff = saverNow && !alarm && !clearing && !portalOn && t - lastInput > SCREEN_OFF_MS;
   static uint8_t brightness = 1;
   if (screenOff) wanted = 0;
-  if (wanted != brightness) M5.Display.setBrightness(brightness = wanted);
+  if (wanted != brightness) {
+    M5.Display.setBrightness(brightness = wanted);
+    Serial.printf("brightness %u (setting %d, saver %d)\n", wanted, cfg.bright, (bool)saverNow);
+  }
   // The ticker and the glitch move; in saver mode the screen stays still to spare the battery.
   if (alarm) fxKind = K_NONE;
   bool invert = fxKind >= K_STRIKE && t - fxAt < INVERT_MS;
