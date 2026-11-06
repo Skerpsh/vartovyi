@@ -25,7 +25,8 @@ grep -q '@peacestick ' "$FILE" || route peacestick /peace-stick alert.txt >>"$ne
 grep -q '@peacestickhist ' "$FILE" || route peacestickhist /peace-stick/history history.txt >>"$new"
 grep -q '@peacestickver ' "$FILE" || route peacestickver /peace-stick/version firmware.md5 >>"$new"
 grep -q '@peacestickfw ' "$FILE" || route peacestickfw /peace-stick/firmware firmware.bin >>"$new"
-grep -q '@peacestickfwsig ' "$FILE" || route peacestickfwsig /peace-stick/firmware-sig firmware.sig >>"$new"
+grep -q '@peacestickrel ' "$FILE" || route peacestickrel /peace-stick/release release.txt >>"$new"
+grep -q '@peacestickrelsig ' "$FILE" || route peacestickrelsig /peace-stick/release-sig release.txt.sig >>"$new"
 # Every oblast's file and the list of them, for the firmware that covers all of Ukraine.
 grep -q 'handle_path /peace-stick/v2/' "$FILE" || cat >>"$new" <<EOF
     handle_path /peace-stick/v2/* {

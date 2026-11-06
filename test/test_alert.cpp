@@ -190,6 +190,18 @@ int main() {
   assert(!splitSigned("ts 1\nsig \n", signedLen, sig, sigLen));
   assert(splitSigned("ts 1\nsig AAAA\nsig QUJD", signedLen, sig, sigLen) && !strncmp(sig, "QUJD", 4) && signedLen == 14);
 
+  // Versions compare as numbers; a dev build is older than any release
+  assert(versionNumber("v1.4.0") == 1004000 && versionNumber("v1.10.2") > versionNumber("v1.9.9"));
+  assert(versionNumber("dev") == 0 && versionNumber("") == 0 && versionNumber(nullptr) == 0 && versionNumber("v1.4") == 0);
+  // The release manifest
+  char ver[16], fw[65];
+  std::string hash(64, 'a');
+  std::string manifest = "version v1.4.0\n" + hash + "  firmware.bin\n" + std::string(64, 'b') + "  server.tar.gz\n";
+  assert(parseManifest(manifest.c_str(), ver, sizeof ver, fw) && !strcmp(ver, "v1.4.0") && hash == fw);
+  assert(!parseManifest(("version dev\n" + hash + "  firmware.bin\n").c_str(), ver, sizeof ver, fw));       // no release version
+  assert(!parseManifest("version v1.4.0\n", ver, sizeof ver, fw));                                          // no firmware hash
+  assert(!parseManifest(("version v1.4.0\n" + std::string(64, 'A') + "  firmware.bin\n").c_str(), ver, sizeof ver, fw));  // not lower-case hex
+
   // Link states
   static Feed good;
   good = Feed{};

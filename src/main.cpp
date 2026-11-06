@@ -308,27 +308,30 @@ bool feedSigned(const String& body) {
   return signedBy(FEED_KEY, hash, sig, sigLen);
 }
 
-// Runs in the fetch task, on request only. Installs only an image signed with the release key, so the server
-// alone cannot hand out firmware of its own; the MD5 it publishes only tells whether there is something new.
+// Runs in the fetch task, on request only. The release manifest names the version and the firmware's SHA-256 and is
+// signed with the release key: the stick installs only a newer version than its own, and only that exact image.
+// So the server alone can neither hand out firmware of its own nor roll a stick back to an older release.
 void runUpdate() {
   updatePercent = -1;
-  String md5, sig;
+  String manifest, sig;
   updateStatus = "Checking";
-  int code = fetchText(ALERT_URL "/version", md5);
-  md5.trim();
-  if (code != 200 || md5.length() != 32) {
+  int code = fetchText(ALERT_URL "/release", manifest);
+  if (code != 200 || fetchText(ALERT_URL "/release-sig", sig) != 200) {
     updateStatus = "None published";
     return;
   }
-  if (md5 == ESP.getSketchMD5()) {
+  sig.trim();
+  uint8_t hash[32];
+  mbedtls_sha256_ret((const uint8_t*)manifest.c_str(), manifest.length(), hash, 0);
+  char version[16], wanted[65];
+  if (!signedBy(RELEASE_KEY, hash, sig.c_str(), sig.length()) || !parseManifest(manifest.c_str(), version, sizeof version, wanted)) {
+    updateStatus = "Bad signature";
+    return;
+  }
+  if (versionNumber(version) <= versionNumber(VERSION)) {
     updateStatus = "Up to date";
     return;
   }
-  if (fetchText(ALERT_URL "/firmware-sig", sig) != 200) {
-    updateStatus = "Not signed";
-    return;
-  }
-  sig.trim();
   updateStatus = "Downloading";
   if (!http.begin(tls, ALERT_URL "/firmware")) {
     updateStatus = "Failed";
@@ -338,7 +341,6 @@ void runUpdate() {
   int size = http.getSize();
   bool ok = code == 200 && size > 0 && Update.begin(size), genuine = false;
   if (ok) {
-    Update.setMD5(md5.c_str());
     mbedtls_sha256_context sha;
     mbedtls_sha256_init(&sha);
     mbedtls_sha256_starts_ret(&sha, 0);
@@ -357,10 +359,11 @@ void runUpdate() {
       done += n;
       updatePercent = done * 100LL / size;
     }
-    uint8_t hash[32];
     mbedtls_sha256_finish_ret(&sha, hash);
     mbedtls_sha256_free(&sha);
-    genuine = ok && done == size && signedBy(RELEASE_KEY, hash, sig.c_str(), sig.length());
+    char got[65];
+    for (int i = 0; i < 32; i++) snprintf(got + 2 * i, 3, "%02x", hash[i]);
+    genuine = ok && done == size && !strcmp(got, wanted);
     ok = genuine && Update.end();
     if (!ok) Update.abort();
   }
@@ -368,7 +371,7 @@ void runUpdate() {
   tls.stop();
   if (!ok) {
     Serial.printf("update failed: http %d, genuine %d, %s\n", code, genuine, Update.errorString());
-    updateStatus = code == 200 && !genuine ? "Bad signature" : "Failed";
+    updateStatus = code == 200 && !genuine ? "Bad image" : "Failed";
     updatePercent = -1;
     return;
   }

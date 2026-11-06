@@ -150,6 +150,31 @@ inline bool splitSigned(const char* s, size_t& signedLen, const char*& sig, size
   return sigLen > 0 && (!end || end[1] == 0);
 }
 
+// "v1.4.0" as 1004000, so versions compare as numbers; anything else (a "dev" build) is 0, older than every release.
+inline long versionNumber(const char* v) {
+  int major = 0, minor = 0, patch = 0;
+  if (!v || sscanf(v, "v%d.%d.%d", &major, &minor, &patch) != 3 || major < 0 || minor < 0 || patch < 0) return 0;
+  return major * 1000000L + minor * 1000L + patch;
+}
+
+// The signed release manifest (sign-release.sh): "version vX.Y.Z", then "<sha256 hex>  <file>" lines.
+// Takes the version and the firmware's hash; false unless both are there and well formed.
+inline bool parseManifest(const char* s, char* version, size_t versionSize, char* firmwareHash /* 65 bytes */) {
+  version[0] = firmwareHash[0] = 0;
+  while (s && *s) {
+    const char* end = strchr(s, '\n');
+    size_t len = end ? (size_t)(end - s) : strlen(s);
+    if (len > 8 && !strncmp(s, "version ", 8)) copyValue(version, versionSize, s + 8, len - 8);
+    if (len == 64 + 2 + 12 && !strncmp(s + 64, "  firmware.bin", 14)) {
+      bool hex = true;
+      for (int i = 0; i < 64 && hex; i++) hex = isxdigit((unsigned char)s[i]) && !isupper((unsigned char)s[i]);
+      if (hex) copyValue(firmwareHash, 65, s, 64);
+    }
+    s = end ? end + 1 : nullptr;
+  }
+  return versionNumber(version) > 0 && strlen(firmwareHash) == 64;
+}
+
 // Format: one "key value" per line; see vps/peace_bridge.py. False if this is not our file.
 inline bool parseFeed(const char* s, Feed& out) {
   out = Feed{};
