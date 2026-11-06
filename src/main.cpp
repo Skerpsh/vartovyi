@@ -43,9 +43,17 @@ const uint8_t BRIGHT_SAVER = 40, BRIGHT_ACTIVE = 160, BRIGHT_ALARM = 255;
 const char* const AP_NAME = "Vartovyi";
 
 constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
-// The chrome is the orange of the stick's case; danger keeps its own colours.
-const uint16_t C_BG = rgb(5, 5, 7), C_SCAN = rgb(17, 13, 9), C_PANEL = rgb(30, 19, 6), C_DIM = rgb(105, 60, 10);
-const uint16_t C_ORANGE = rgb(255, 156, 0), C_TEXT = rgb(255, 238, 214), C_MUTED = rgb(150, 124, 96);
+// The chrome comes from one accent colour, the stick's orange unless the user picks another theme.
+// Danger keeps its own colours, so no theme is red, yellow or green.
+struct Theme {
+  const char* name;
+  uint8_t r, g, b;
+};
+const Theme THEMES[] = {{"Orange", 255, 156, 0}, {"Cyan", 0, 229, 255},  {"Magenta", 255, 40, 190},
+                        {"Violet", 165, 95, 255}, {"Blue", 45, 130, 255}, {"Ice", 205, 225, 255}};
+const int THEME_COUNT = sizeof THEMES / sizeof THEMES[0];
+const uint16_t C_BG = rgb(5, 5, 7);
+uint16_t C_ACCENT, C_DIM, C_PANEL, C_SCAN, C_TEXT, C_MUTED;
 const uint16_t C_GREEN = rgb(57, 255, 20), C_CYAN = rgb(0, 229, 255), C_YELLOW = rgb(255, 228, 0);
 const uint16_t C_RED = rgb(255, 32, 56), C_BLACK = rgb(0, 0, 0), C_WHITE = rgb(255, 255, 255);
 
@@ -70,12 +78,13 @@ const Step BALLISTIC[] = {{3700, 110}, {2300, 110}};
 
 enum Page { P_HOME, P_MAP, P_DETAILS, P_HISTORY, P_STATS, P_SYSTEM, PAGE_COUNT };
 enum Menu { M_NONE, M_MAIN, M_ZONES, M_REGIONS };
-enum MenuItem { MI_REGION, MI_ZONES, MI_VOLUME, MI_BRIGHT, MI_NIGHT, MI_FLIP, MI_POWER, MI_TEST, MI_SETUP, MI_UPDATE, MI_COUNT };
+enum MenuItem { MI_REGION, MI_ZONES, MI_THEME, MI_VOLUME, MI_BRIGHT, MI_NIGHT, MI_FLIP, MI_POWER, MI_TEST, MI_SETUP, MI_UPDATE, MI_COUNT };
 enum PowerMode { POWER_AUTO, POWER_NORMAL, POWER_SAVER };
 
 struct Settings {
   char oblast[REGION_ID] = "14", oblastName[ZONE_NAME] = "Kyivska";  // Kyiv, where the first firmware lived
   unsigned zones = DEFAULT_ZONES;
+  int theme = 0;
   bool nightOn = true, flip = true;
   int nightStart = 23, nightEnd = 7;
   int power = POWER_AUTO;
@@ -136,6 +145,26 @@ bool isAlarm(Sound s) { return s == S_SIREN || s == S_BALLISTIC || s == S_BEEPS 
 
 // ---------- settings ----------
 
+// Everything but the accent is the accent mixed with black, grey or white, so any theme stays one family.
+struct Rgb {
+  int r, g, b;
+  uint16_t c565() const { return rgb(r, g, b); }
+};
+Rgb mixed(const Theme& t, int with, int pct) {
+  return {t.r + (with - t.r) * pct / 100, t.g + (with - t.g) * pct / 100, t.b + (with - t.b) * pct / 100};
+}
+// The phone page in the same colours: accent, dim, panel, muted, text.
+const char* const PAGE_COLORS[] = {"#ff9c00", "#693c0a", "#1e1306", "#967c60", "#ffeed6"};
+char themeHex[5][8];
+
+void applyTheme() {
+  const Theme& t = THEMES[cfg.theme];
+  const Rgb all[] = {mixed(t, 0, 0), mixed(t, 0, 59), mixed(t, 0, 88), mixed(t, 120, 60), mixed(t, 255, 85)};
+  C_ACCENT = all[0].c565(), C_DIM = all[1].c565(), C_PANEL = all[2].c565(), C_MUTED = all[3].c565(), C_TEXT = all[4].c565();
+  C_SCAN = mixed(t, 0, 93).c565();
+  for (int i = 0; i < 5; i++) snprintf(themeHex[i], sizeof themeHex[i], "#%02x%02x%02x", all[i].r, all[i].g, all[i].b);
+}
+
 void savePool() {
   prefs.putInt("nets", poolCount);
   for (int i = 0; i < poolCount; i++) {
@@ -162,6 +191,7 @@ void saveSettings() {
   prefs.putInt("power", cfg.power);
   prefs.putInt("bright", cfg.bright);
   prefs.putInt("volume", cfg.volume);
+  prefs.putInt("theme", cfg.theme);
   maskNow = cfg.zones;
 }
 
@@ -178,6 +208,8 @@ void loadSettings() {
   cfg.power = prefs.getInt("power", POWER_AUTO);
   cfg.bright = constrain(prefs.getInt("bright", 1), 0, 2);
   cfg.volume = constrain(prefs.getInt("volume", 2), 0, 2);
+  cfg.theme = constrain(prefs.getInt("theme", 0), 0, THEME_COUNT - 1);
+  applyTheme();
   maskNow = cfg.zones;
   poolCount = min(prefs.getInt("nets", 0), MAX_NETS);
   for (int i = 0; i < poolCount; i++) {
@@ -409,6 +441,7 @@ String setupPage(const String& message) {
   }
   h += F("<button>Save</button></form></section>"
          "<form method=post action=/done><button class=s>Close setup</button></form><p class=tip>Vartovyi " VERSION "</p></body></html>");
+  for (int i = 0; i < 5; i++) h.replace(PAGE_COLORS[i], themeHex[i]);  // the page is written in the orange theme
   return h;
 }
 
@@ -516,7 +549,7 @@ void setupRoutes() {
   server.on("/region", HTTP_POST, saveRegion);
   server.on("/night", HTTP_POST, saveNight);
   server.on("/done", HTTP_POST, [] {
-    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=viewport content='width=device-width'><body style='background:#050507;color:#ff9c00;font:18px ui-monospace,monospace;padding:24px'>Setup closed. You can leave this network.");
+    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=viewport content='width=device-width'><body style='background:#050507;color:" + String(themeHex[0]) + ";font:18px ui-monospace,monospace;padding:24px'>Setup closed. You can leave this network.");
     portalStopRequested = true;
   });
   // Any other address, like the iPhone's captive portal check, leads to the page, so it opens by itself.
@@ -660,7 +693,7 @@ void drawBattery(int right, int y, uint16_t fg) {
   auto& d = canvas;
   const int SEG = 5, W = 4, GAP = 1;
   int x = right - SEG * (W + GAP);
-  uint16_t fill = fg != C_MUTED ? fg : battery <= 15 ? C_RED : battery <= 35 ? C_YELLOW : C_ORANGE;
+  uint16_t fill = fg != C_MUTED ? fg : battery <= 15 ? C_RED : battery <= 35 ? C_YELLOW : C_ACCENT;
   int lit = (constrain(battery, 0, 100) + 19) / 20;
   for (int i = 0; i < SEG; i++) d.fillRect(x + i * (W + GAP), y, W, 9, i < lit ? fill : C_DIM);
   char text[8];
@@ -704,15 +737,15 @@ void drawHeader(const char* name, int number, Link link) {
   scanlines();
   char num[4];
   snprintf(num, sizeof num, "%02d", number);
-  chamfer(0, 0, 22, 15, 4, C_ORANGE, true);
+  chamfer(0, 0, 22, 15, 4, C_ACCENT, true);
   drawText(num, 11, 8, middle_center, C_BLACK);
-  drawText(name, 27, 8, middle_left, C_ORANGE);
+  drawText(name, 27, 8, middle_left, C_ACCENT);
   d.setFont(&fonts::Font2);
   drawText("//VARTOVYI", 27 + d.textWidth(name) + 3, 9, middle_left, C_DIM, &fonts::Font0);
   d.fillRect(d.width() - 85, 4, 7, 7, linkColor(link));
   drawBattery(d.width() - 2, 3, C_MUTED);
   d.drawFastHLine(0, 16, d.width(), C_DIM);
-  d.drawFastHLine(0, 16, 60, C_ORANGE);
+  d.drawFastHLine(0, 16, 60, C_ACCENT);
 }
 
 // What each button does here, pointing at it: the right side button sits on top, power at the bottom, M5 to the right.
@@ -721,18 +754,18 @@ void drawFooter(const char* next, const char* back, const char* ok) {
   d.drawFastHLine(0, FOOT_Y, d.width(), C_DIM);
   int x = 4, y = FOOT_Y + 8;
   if (next[0]) {
-    d.fillTriangle(x, y + 4, x + 8, y + 4, x + 4, y - 4, C_ORANGE);
+    d.fillTriangle(x, y + 4, x + 8, y + 4, x + 4, y - 4, C_ACCENT);
     drawText(next, x + 12, y, middle_left, C_TEXT);
   }
   x = 86;
   if (back[0]) {
-    d.fillTriangle(x, y - 4, x + 8, y - 4, x + 4, y + 4, C_ORANGE);
+    d.fillTriangle(x, y - 4, x + 8, y - 4, x + 4, y + 4, C_ACCENT);
     drawText(back, x + 12, y, middle_left, C_TEXT);
   }
   if (ok[0]) {
     d.setFont(&fonts::Font2);
     int w = d.textWidth(ok) + 30;
-    chamfer(d.width() - w, FOOT_Y + 2, w, 13, 3, C_ORANGE, true);
+    chamfer(d.width() - w, FOOT_Y + 2, w, 13, 3, C_ACCENT, true);
     drawText("M5", d.width() - w + 5, y, middle_left, C_BLACK, &fonts::Font0);
     drawText(ok, d.width() - 4, y, middle_right, C_BLACK);
   }
@@ -748,7 +781,7 @@ void drawGlitch(unsigned long t) {
   auto& d = canvas;
   for (int i = 0; i < 5; i++) {
     int y = esp_random() % d.height(), h = 1 + esp_random() % 3, x = esp_random() % d.width();
-    d.fillRect(x, y, 20 + esp_random() % 120, h, i % 2 ? C_CYAN : C_ORANGE);
+    d.fillRect(x, y, 20 + esp_random() % 120, h, i % 2 ? C_CYAN : C_ACCENT);
   }
   int y = 20 + esp_random() % 80;
   d.fillRect(0, y, d.width(), 2, C_BLACK);
@@ -817,10 +850,10 @@ void drawHome(Link link, long long now) {
   }
   if (link == LINK_WAIT || linkIsBad(link)) {
     bool wait = link == LINK_WAIT;
-    brackets(8, 24, d.width() - 16, 70, wait ? C_ORANGE : C_YELLOW);
-    drawFitted(wait ? "LINKING" : linkTitle(link), 50, wait ? C_ORANGE : C_YELLOW, 200);
+    brackets(8, 24, d.width() - 16, 70, wait ? C_ACCENT : C_YELLOW);
+    drawFitted(wait ? "LINKING" : linkTitle(link), 50, wait ? C_ACCENT : C_YELLOW, 200);
     if (wait) {
-      for (int i = 0, lit = millis() / 150 % 12; i < 12; i++) d.fillRect(38 + i * 14, 74, 10, 6, i <= lit ? C_ORANGE : C_DIM);
+      for (int i = 0, lit = millis() / 150 % 12; i < 12; i++) d.fillRect(38 + i * 14, 74, 10, 6, i <= lit ? C_ACCENT : C_DIM);
     } else {
       drawText("ALERTS MAY BE MISSED", d.width() / 2, 78, middle_center, C_TEXT);
     }
@@ -832,7 +865,7 @@ void drawHome(Link link, long long now) {
   struct tm local;
   if (timeIsSynced(now) && localtime_r(&raw, &local)) strftime(clock, sizeof clock, "%H:%M", &local);
   brackets(30, 21, d.width() - 60, 54, C_DIM);
-  drawSegments(clock, d.width() / 2, 48, C_ORANGE, 170);
+  drawSegments(clock, d.width() / 2, 48, C_ACCENT, 170);
   chamfer(4, 79, d.width() - 8, 20, 5, C_GREEN, false);
   d.fillRect(10, 85, 8, 8, C_GREEN);
   drawText("ALL CLEAR", 24, 89, middle_left, C_GREEN);
@@ -871,7 +904,7 @@ void drawMap(Link link) {
       text = onColor(levelColor(a->level));
     } else {
       chamfer(x, y, TW, TH, 4, C_PANEL, true);
-      chamfer(x, y, TW, TH, 4, a ? levelColor(a->level) : wanted ? C_ORANGE : C_DIM, false);
+      chamfer(x, y, TW, TH, 4, a ? levelColor(a->level) : wanted ? C_ACCENT : C_DIM, false);
     }
     d.setFont(&fonts::Font2);
     drawText(l.zones[i].label, x + TW / 2, y + TH / 2, middle_center, text, d.textWidth(l.zones[i].label) > TW - 6 ? (const lgfx::IFont*)&fonts::Font0 : &fonts::Font2);
@@ -935,7 +968,7 @@ void drawHistory(Link link, long long now) {
     char when[14];
     strftime(when, sizeof when, local.tm_yday == today.tm_yday ? "%H:%M" : "%d.%m %H:%M", &local);
     d.fillRect(4, y - 4, 8, 8, levelColor(e.level));
-    drawClipped(when, 17, y, 80, C_ORANGE);
+    drawClipped(when, 17, y, 80, C_ACCENT);
     drawClipped(e.zone, 97, y, 140, e.level == L_NONE ? C_MUTED : C_TEXT);
     d.drawFastHLine(17, y + 10, d.width() - 21, C_SCAN);
   }
@@ -958,7 +991,7 @@ void drawStats(Link link) {
     char a[12], b[12], line[32];
     formatMinutes(s.todayMin, a, sizeof a);
     snprintf(line, sizeof line, "TODAY %d / %s", s.todayCount, a);
-    drawClipped(line, 9, y + 23, 112, C_ORANGE);
+    drawClipped(line, 9, y + 23, 112, C_ACCENT);
     formatMinutes(s.weekMin, b, sizeof b);
     snprintf(line, sizeof line, "WEEK %d / %s", s.weekCount, b);
     drawClipped(line, 123, y + 23, 112, C_MUTED);
@@ -986,7 +1019,7 @@ void drawSystem(Link link, long long now) {
   snprintf(rows[5][1], 40, "%s, up %lum", VERSION, millis() / 60000);
   for (int r = 0; r < 6; r++) {
     int y = 26 + r * 16;
-    drawText(rows[r][0], 6, y, middle_left, C_ORANGE);
+    drawText(rows[r][0], 6, y, middle_left, C_ACCENT);
     drawClipped(rows[r][1], 76, y, d.width() - 80, r == 1 && link != LINK_OK ? C_YELLOW : C_TEXT);
   }
 }
@@ -1023,6 +1056,10 @@ void menuText(int item, char* left, char* right, size_t size) {
       snprintf(left, size, "Volume");
       snprintf(right, size, "%s", LEVEL_NAMES[cfg.volume]);
       break;
+    case MI_THEME:
+      snprintf(left, size, "Theme");
+      snprintf(right, size, "%s", THEMES[cfg.theme].name);
+      break;
     case MI_TEST: snprintf(left, size, "Test alarm"); break;
     case MI_SETUP: snprintf(left, size, "Phone setup"); break;
     case MI_UPDATE:
@@ -1034,42 +1071,82 @@ void menuText(int item, char* left, char* right, size_t size) {
   }
 }
 
-void drawRow(int r, const char* left, const char* right, bool selected) {
+// The selection bar slides to its row with a fading trail and a cyan fringe, then the row's name decodes out of noise.
+const unsigned long SLIDE_MS = 170, DECODE_MS = 280;
+int barFromY = FOOT_Y, barShownY = FOOT_Y;  // where the bar started its move, and where it was last drawn
+unsigned long barMovedAt = 0;
+
+void moveBar(unsigned long t) {
+  barFromY = barShownY;
+  barMovedAt = t;
+}
+bool menuAnimating(unsigned long t) { return barMovedAt && t - barMovedAt < SLIDE_MS + DECODE_MS; }
+float easeOut(float p) { return 1 - (1 - p) * (1 - p) * (1 - p); }
+
+// Letters not yet decoded show as noise, resolving left to right.
+void decode(const char* src, char* out, size_t size, float progress) {
+  static const char NOISE[] = "#$%&*+<>/|=01ABCDEFXZ";
+  size_t n = min(strlen(src), size - 1), shown = progress >= 1 ? n : (size_t)(n * progress);
+  for (size_t i = 0; i < n; i++) out[i] = i < shown || src[i] == ' ' ? src[i] : NOISE[esp_random() % (sizeof NOISE - 1)];
+  out[n] = 0;
+}
+
+void drawRow(int r, const char* left, const char* right, bool onBar, float decoded) {
   int y = 20 + r * 20;
-  if (selected) chamfer(2, y, canvas.width() - 4, 19, 5, C_ORANGE, true);
-  uint16_t text = selected ? C_BLACK : C_TEXT;
-  drawClipped(left, 10, y + 10, 130, text);
-  drawText(right, canvas.width() - 9, y + 10, middle_right, selected ? C_BLACK : C_ORANGE);
+  char shown[32];
+  decode(left, shown, sizeof shown, decoded);
+  drawClipped(shown, 10, y + 10, 130, onBar ? C_BLACK : C_TEXT);
+  drawText(right, canvas.width() - 9, y + 10, middle_right, onBar ? C_BLACK : C_ACCENT);
 }
 
 void drawMenu(Link link) {
+  auto& d = canvas;
   const int ROWS = 5;
   int count = menu == M_ZONES ? feed.list.count : menu == M_REGIONS ? regions.count : MI_COUNT;
   drawHeader(menu == M_ZONES ? "ZONES" : menu == M_REGIONS ? "OBLAST" : "MENU", menuIndex + 1, link);
   const char* ok = menu == M_ZONES ? "TOGGLE" : menu == M_REGIONS ? "CHOOSE" : "SET";
   if (menu == M_MAIN && (menuIndex == MI_REGION || menuIndex == MI_ZONES)) ok = "OPEN";
   if (menu == M_MAIN && (menuIndex == MI_TEST || menuIndex == MI_SETUP || menuIndex == MI_UPDATE)) ok = "RUN";
+  if (menu == M_MAIN && menuIndex == MI_THEME) ok = "NEXT THEME";
   drawFooter("NEXT", "BACK", ok);
   if (!count) {
     drawFitted("LOADING", 68, C_DIM);
     return;
   }
   int top = menuIndex < ROWS ? 0 : menuIndex - ROWS + 1;
+
+  unsigned long since = millis() - barMovedAt;
+  float slide = barMovedAt ? min(1.0f, since / (float)SLIDE_MS) : 1;
+  float decoded = barMovedAt && since < SLIDE_MS + DECODE_MS ? (since > SLIDE_MS ? (since - SLIDE_MS) / (float)DECODE_MS : 0) : 1;
+  int targetY = 20 + (menuIndex - top) * 20;
+  int y = barFromY + (int)((targetY - barFromY) * easeOut(slide));
+  if (slide < 1) {
+    for (int k = 2; k >= 1; k--) {
+      float back = max(0.0f, slide - 0.22f * k);
+      chamfer(2, barFromY + (int)((targetY - barFromY) * easeOut(back)), d.width() - 4, 19, 5, k == 2 ? C_PANEL : C_DIM, true);
+    }
+    chamfer(5, y + 1, d.width() - 6, 19, 5, C_CYAN, false);
+  }
+  chamfer(2, y, d.width() - 4, 19, 5, C_ACCENT, true);
+  barShownY = y;
+
   char left[32], right[32];
   for (int r = 0; r < ROWS && top + r < count; r++) {
     int i = top + r;
+    bool onBar = i == menuIndex && slide >= 1;
+    float dec = i == menuIndex ? decoded : 1;
     if (menu == M_ZONES) {
-      drawRow(r, feed.list.zones[i].name, cfg.zones & (1u << i) ? "[x]" : "[ ]", i == menuIndex);
+      drawRow(r, feed.list.zones[i].name, cfg.zones & (1u << i) ? "[x]" : "[ ]", onBar, dec);
     } else if (menu == M_REGIONS) {
-      drawRow(r, regions.regions[i].name, strcmp(regions.regions[i].id, cfg.oblast) ? "" : "<<", i == menuIndex);
+      drawRow(r, regions.regions[i].name, strcmp(regions.regions[i].id, cfg.oblast) ? "" : "<<", onBar, dec);
     } else {
       menuText(i, left, right, sizeof left);
-      drawRow(r, left, right, i == menuIndex);
+      drawRow(r, left, right, onBar, dec);
     }
   }
   // where in the list: a thin bar on the right edge
   int h = (FOOT_Y - 22) * min(count, ROWS) / count;
-  canvas.fillRect(canvas.width() - 2, 20 + (FOOT_Y - 22 - h) * top / max(1, count - ROWS), 2, h, C_ORANGE);
+  d.fillRect(d.width() - 2, 20 + (FOOT_Y - 22 - h) * top / max(1, count - ROWS), 2, h, C_ACCENT);
 }
 
 void drawPortal() {
@@ -1079,20 +1156,20 @@ void drawPortal() {
   d.fillRect(0, 0, 135, 135, C_WHITE);  // a QR code needs a light background to scan
   d.qrcode(joined ? "http://192.168.4.1/" : apQr.c_str(), 4, 4, 127, 4);
   int x = 142;
-  drawText("SETUP", x, 10, middle_left, C_ORANGE);
+  drawText("SETUP", x, 10, middle_left, C_ACCENT);
   d.drawFastHLine(x, 19, 94, C_DIM);
   if (joined) {
     drawText("phone joined", x, 32, middle_left, C_GREEN);
     drawText("scan again or", x, 54, middle_left, C_TEXT);
     drawText("open", x, 70, middle_left, C_TEXT);
-    drawText("192.168.4.1", x, 86, middle_left, C_ORANGE);
+    drawText("192.168.4.1", x, 86, middle_left, C_ACCENT);
   } else {
     drawText("scan with", x, 32, middle_left, C_TEXT);
     drawText("the camera", x, 48, middle_left, C_TEXT);
-    drawText(AP_NAME, x, 70, middle_left, C_ORANGE);
+    drawText(AP_NAME, x, 70, middle_left, C_ACCENT);
     drawText(apPass.c_str(), x, 86, middle_left, C_MUTED);
   }
-  chamfer(x, 111, 92, 18, 4, C_ORANGE, true);
+  chamfer(x, 111, 92, 18, 4, C_ACCENT, true);
   drawText("M5 / BACK: EXIT", x + 46, 120, middle_center, C_BLACK, &fonts::Font0);
 }
 
@@ -1103,6 +1180,79 @@ void drawClear() {
   chamfer(20, 34, d.width() - 40, 44, 8, C_GREEN, true);
   drawFitted("ALL CLEAR", 56, C_BLACK, 190);
   drawText("THREAT ENDED // STAND DOWN", d.width() / 2, 96, middle_center, C_GREEN);
+}
+
+// An old monitor switching on: a line grows from the centre, then the picture opens up and down.
+// Drawn over whatever is on the canvas; p runs from 0 to 1.
+void crtOpen(float p) {
+  auto& d = canvas;
+  int W = d.width(), H = d.height();
+  if (p < 0.35f) {
+    int w = max(2, (int)(W * easeOut(p / 0.35f)));
+    d.fillScreen(C_BLACK);
+    d.fillRect((W - w) / 2, H / 2 - 1, w, 2, C_TEXT);
+    d.drawFastHLine((W - w) / 2, H / 2 - 2, w, C_ACCENT);
+    d.drawFastHLine((W - w) / 2, H / 2 + 1, w, C_ACCENT);
+    return;
+  }
+  int h = max(4, (int)(H * easeOut((p - 0.35f) / 0.65f))), top = (H - h) / 2;
+  d.fillRect(0, 0, W, top, C_BLACK);
+  d.fillRect(0, top + h, W, H - top - h, C_BLACK);
+  d.drawFastHLine(0, top, W, C_ACCENT);
+  d.drawFastHLine(0, top + h - 1, W, C_ACCENT);
+}
+
+const unsigned long WAKE_MS = 380;
+unsigned long wokeAt = 0;  // the screen came back from saver sleep
+
+// Power on: the monitor opens, a boot log runs, the name decodes out of noise. Any button skips it.
+// The fetch task already runs meanwhile, so the first alerts are not late.
+void bootAnimation() {
+  auto& d = canvas;
+  const unsigned long OPEN = 700, STEP = 300, LOG = 2300, LOGO_FOR = 2600, LOGO = LOG + LOGO_FOR, DECODE = 900;
+  char oblast[ZONE_NAME];
+  snprintf(oblast, sizeof oblast, "%s", cfg.oblastName);
+  for (char* c = oblast; *c; c++) *c = toupper(*c);
+  const char* const LINES[][2] = {{"> core", "OK"}, {"> display", "OK"}, {"> audio", "OK"}, {"> oblast", oblast},
+                                  {"> uplink", poolCount ? "ARMED" : "SETUP"}};
+  const int N = sizeof LINES / sizeof LINES[0];
+  unsigned long start = millis();
+  for (unsigned long e = 0; e < LOGO; e = millis() - start) {
+    M5.update();
+    if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) break;
+    scanlines();
+    if (e < LOGO - LOGO_FOR) {
+      drawText("VARTOVYI // AIR ALERT TERMINAL", 6, 10, middle_left, C_ACCENT, &fonts::Font0);
+      d.drawFastHLine(6, 17, d.width() - 12, C_DIM);
+      int shown = e < OPEN ? 0 : min(N, (int)((e - OPEN) / STEP) + 1);
+      for (int i = 0; i < shown; i++) {
+        int y = 31 + i * 15;
+        bool last = i == shown - 1 && e < OPEN + (unsigned long)(i + 1) * STEP;  // still being typed
+        drawText(LINES[i][0], 6, y, middle_left, C_TEXT, &fonts::FreeMono9pt7b);
+        d.setFont(&fonts::FreeMono9pt7b);
+        int dotsFrom = 6 + d.textWidth(LINES[i][0]) + 4;
+        for (int x = dotsFrom; x < 160; x += 6) d.fillRect(x, y + 3, 2, 2, C_DIM);
+        if (!last) drawText(LINES[i][1], d.width() - 8, y, middle_right, i == 4 && !poolCount ? C_YELLOW : C_GREEN, &fonts::FreeMono9pt7b);
+      }
+      float bar = e < OPEN ? 0 : min(1.0f, (e - OPEN) / (float)(LOG - OPEN));
+      d.drawRect(6, 112, d.width() - 12, 10, C_DIM);
+      d.fillRect(8, 114, (int)((d.width() - 16) * bar), 6, C_ACCENT);
+    } else {
+      float p = min(1.0f, (e - (LOGO - LOGO_FOR)) / (float)DECODE);
+      char name[12];
+      decode("VARTOVYI", name, sizeof name, p);
+      brackets(10, 22, d.width() - 20, 76, C_DIM);
+      if (p < 1) drawText(name, d.width() / 2 + 2, 58, middle_center, C_CYAN, &fonts::Orbitron_Light_32);
+      drawText(name, d.width() / 2, 56, middle_center, C_ACCENT, &fonts::Orbitron_Light_32);
+      drawText(VERSION " // DEVELOPED BY SKERPSH", d.width() / 2, 88, middle_center, C_MUTED);
+      glitchUntil = p < 1 ? millis() + 40 : 0;
+      drawGlitch(millis());
+    }
+    if (e < OPEN) crtOpen(e / (float)OPEN);
+    d.pushSprite(0, 0);
+    delay(30);
+  }
+  glitch(millis());
 }
 
 void render(Sound sound, Link link, long long now, unsigned long t) {
@@ -1120,7 +1270,8 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
   if (screenOff) wanted = 0;
   if (wanted != brightness) M5.Display.setBrightness(brightness = wanted);
   // The ticker and the glitch move; in saver mode the screen stays still to spare the battery.
-  unsigned long every = due(glitchUntil, t) ? 40 : saverNow ? DRAW_SAVER_MS : DRAW_MS;
+  bool moving = due(glitchUntil, t) || menuAnimating(t) || t - wokeAt < WAKE_MS + 30;
+  unsigned long every = moving ? 30 : saverNow ? DRAW_SAVER_MS : DRAW_MS;
   if (screenOff || (!alarm && t - lastDraw < every)) return;
   lastDraw = t;
 
@@ -1149,6 +1300,7 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
     }
   }
   if (!alarm) drawGlitch(t);
+  if (!alarm && t - wokeAt < WAKE_MS) crtOpen((t - wokeAt) / (float)WAKE_MS);
   canvas.pushSprite(0, 0);
 }
 
@@ -1213,6 +1365,12 @@ void activateMenuItem(unsigned long t) {
     case MI_POWER: cfg.power = stepIndex(cfg.power, 3, 1); saveSettings(); break;
     case MI_BRIGHT: cfg.bright = stepIndex(cfg.bright, 3, 1); saveSettings(); break;
     case MI_VOLUME: cfg.volume = stepIndex(cfg.volume, 3, 1); saveSettings(); chimePending = true; break;
+    case MI_THEME:
+      cfg.theme = stepIndex(cfg.theme, THEME_COUNT, 1);
+      applyTheme();
+      saveSettings();
+      glitch(t);
+      break;
     case MI_UPDATE:
       if (view.level != L_NONE) updateStatus = "Not during alert";  // the download pauses the alerts for a while
       else updateWanted = true;
@@ -1241,6 +1399,7 @@ void handleButtons(bool ok, bool next, bool back, unsigned long t) {
   }
   Page wasPage = page;
   Menu wasMenu = menu;
+  int wasIndex = menuIndex;
   if (back) {
     goBack();
   } else if (menu == M_NONE) {
@@ -1267,6 +1426,10 @@ void handleButtons(bool ok, bool next, bool back, unsigned long t) {
     }
   }
   if (page != wasPage || menu != wasMenu) glitch(t);
+  if (menu != M_NONE && (menu != wasMenu || menuIndex != wasIndex)) {
+    if (wasMenu == M_NONE) barShownY = FOOT_Y;  // a menu that opens: the bar rises from the bottom
+    moveBar(t);
+  }
   lastDraw = 0;
 }
 
@@ -1318,6 +1481,7 @@ void setup() {
   regionResults = xQueueCreate(1, sizeof(RegionList));
   // Core 1 like loop(): a TLS handshake on core 0 starves its idle task and the watchdog reboots the chip.
   xTaskCreatePinnedToCore(fetchTask, "fetch", 12288, nullptr, 1, nullptr, 1);
+  bootAnimation();
 }
 
 void loop() {
@@ -1396,7 +1560,7 @@ void loop() {
       menu = M_NONE;
       Serial.println("silenced");
     } else if (screenOff) {
-      // the press only wakes the screen
+      wokeAt = t;  // the press only wakes the screen
     } else {
       handleButtons(a, b, c, t);
     }
