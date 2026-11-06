@@ -26,6 +26,7 @@
 - Сирена при тривозі, окремий звук для балістики, тихіші сигнали для дронів і відбою.
 - Нічний режим, вимкнення звуку переворотом стіка екраном донизу.
 - Інтерфейс у стилі кібердеку: 6 колірних тем, анімації меню, увімкнення й пробудження.
+- Impact FX: від удару, падіння чи різкого змаху екран на мить «ламається», а артефакти рухаються в бік руху. Вмикається в Menu > Impact FX: Off, Low (лише удари й падіння) або High (ще й змахи та повороти).
 - Історія та статистика тривог, кілька Wi-Fi мереж за пріоритетом.
 - Оновлення по Wi-Fi з автоматичним відкатом, якщо нова версія не запрацювала.
 
@@ -68,7 +69,7 @@ git clone https://github.com/Skerpsh/vartovyi && cd vartovyi
 
 **Екрани:** HOME (годинник і стан), MAP (райони області), ACTIVE (тривоги в ваших районах), HISTORY, STATS (сьогодні й за тиждень), SYSTEM (мережа, зв'язок, версія).
 
-**Меню:** Oblast, Zones, Theme, Volume, Brightness, Night mode, Flip to silence, Power, Test alarm, Phone setup, Update firmware.
+**Меню:** Oblast, Zones, Theme, Impact FX, Volume, Brightness, Night mode, Flip to silence, Power, Test alarm, Phone setup, Update firmware.
 
 ## Звуки
 

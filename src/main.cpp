@@ -31,6 +31,7 @@ const unsigned long TRIAL_MS = 300000;    // a new firmware that reaches no serv
 const int TRIAL_BOOTS = 3;
 const uint8_t BRIGHT_LEVELS[] = {30, 70, 140}, VOLUME_LEVELS[] = {90, 170, 255};
 const char* const LEVEL_NAMES[] = {"Low", "Medium", "High"};
+const char* const IMPACT_NAMES[] = {"Off", "Low", "High"};
 const unsigned long CLEAR_SCREEN_MS = 5000, TEST_MS = 5000, BATTERY_EVERY_MS = 10000;
 const unsigned long BACK_HOME_MS = 60000, SCREEN_OFF_MS = 30000, PORTAL_MS = 300000;
 const unsigned long FLIP_HOLD_MS = 1000;  // long enough that bouncing in a bag does not silence an alarm
@@ -78,13 +79,14 @@ const Step BALLISTIC[] = {{3700, 110}, {2300, 110}};
 
 enum Page { P_HOME, P_MAP, P_DETAILS, P_HISTORY, P_STATS, P_SYSTEM, PAGE_COUNT };
 enum Menu { M_NONE, M_MAIN, M_ZONES, M_REGIONS };
-enum MenuItem { MI_REGION, MI_ZONES, MI_THEME, MI_VOLUME, MI_BRIGHT, MI_NIGHT, MI_FLIP, MI_POWER, MI_TEST, MI_SETUP, MI_UPDATE, MI_COUNT };
+enum MenuItem { MI_REGION, MI_ZONES, MI_THEME, MI_IMPACT, MI_VOLUME, MI_BRIGHT, MI_NIGHT, MI_FLIP, MI_POWER, MI_TEST, MI_SETUP, MI_UPDATE, MI_COUNT };
 enum PowerMode { POWER_AUTO, POWER_NORMAL, POWER_SAVER };
 
 struct Settings {
   char oblast[REGION_ID] = "14", oblastName[ZONE_NAME] = "Kyivska";  // Kyiv, where the first firmware lived
   unsigned zones = DEFAULT_ZONES;
   int theme = 0;
+  int impact = 1;  // knocks break the screen for a moment: 0 off, 1 hits and drops, 2 also swings
   bool nightOn = true, flip = true;
   int nightStart = 23, nightEnd = 7;
   int power = POWER_AUTO;
@@ -192,6 +194,7 @@ void saveSettings() {
   prefs.putInt("bright", cfg.bright);
   prefs.putInt("volume", cfg.volume);
   prefs.putInt("theme", cfg.theme);
+  prefs.putInt("impact", cfg.impact);
   maskNow = cfg.zones;
 }
 
@@ -209,6 +212,7 @@ void loadSettings() {
   cfg.bright = constrain(prefs.getInt("bright", 1), 0, 2);
   cfg.volume = constrain(prefs.getInt("volume", 2), 0, 2);
   cfg.theme = constrain(prefs.getInt("theme", 0), 0, THEME_COUNT - 1);
+  cfg.impact = constrain(prefs.getInt("impact", 1), 0, 2);
   applyTheme();
   maskNow = cfg.zones;
   poolCount = min(prefs.getInt("nets", 0), MAX_NETS);
@@ -1060,6 +1064,10 @@ void menuText(int item, char* left, char* right, size_t size) {
       snprintf(left, size, "Theme");
       snprintf(right, size, "%s", THEMES[cfg.theme].name);
       break;
+    case MI_IMPACT:
+      snprintf(left, size, "Impact FX");
+      snprintf(right, size, "%s", IMPACT_NAMES[cfg.impact]);
+      break;
     case MI_TEST: snprintf(left, size, "Test alarm"); break;
     case MI_SETUP: snprintf(left, size, "Phone setup"); break;
     case MI_UPDATE:
@@ -1255,6 +1263,157 @@ void bootAnimation() {
   glitch(millis());
 }
 
+// A knock leaves the screen "broken" for a moment: rows torn sideways, stuck pixel columns, noise, and on a hard hit
+// a flash of inverted colours. The picture also feels the motion: it lags behind a swing on a spring, a hit sends
+// a wave of tears across from the side it came from, a twist skews it, a fall floats it up and the landing slams
+// it towards the real floor.
+const unsigned long FX_MS[] = {0, 900, 2500, 2300}, INVERT_MS = 130, WAVE_MS = 450;
+KnockSense knock{};
+Knock fxKind = K_NONE;
+unsigned long fxAt = 0;
+uint32_t fxSeed = 1;
+bool inverted = false;
+Side waveFrom = SIDE_LEFT;
+Spring shiftX{}, shiftY{}, skew{};  // the whole picture across and down, and the skew of its top edge
+float gravX = 0, gravY = 0, gravZ = 1;  // where down is, from the sensor while the stick is still
+
+// Sensor axes on the screen, held with M5 to the right of the screen: x to the right, y down.
+// Measured on the stick: standing on its bottom edge reads +ax, the M5 side down reads +ay.
+#define AXIS_RIGHT(ax, ay) (ay)
+#define AXIS_DOWN(ax, ay) (ax)
+
+uint32_t fxRand(uint32_t& s) {  // the same numbers for the whole knock, so stuck columns stay put
+  s ^= s << 13, s ^= s >> 17, s ^= s << 5;
+  return s;
+}
+
+float fxLevel(unsigned long t) {
+  if (fxKind == K_NONE) return 0;
+  unsigned long e = t - fxAt;
+  if (e >= FX_MS[fxKind]) return fxKind = K_NONE, 0;
+  return (fxKind == K_SWING ? 0.5f : 1.0f) * (1 - e / (float)FX_MS[fxKind]);
+}
+
+bool fxMoving(unsigned long t) { return fxKind != K_NONE || shiftX.moving() || shiftY.moving() || skew.moving(); }
+
+// Clipped here: the library trims a rect's size but not a start past the edge, and then writes outside the canvas.
+void scrollArea(int x, int y, int w, int h, int dx, int dy) {
+  int W = canvas.width(), H = canvas.height();
+  if (x < 0) w += x, x = 0;
+  if (y < 0) h += y, y = 0;
+  w = min(w, W - x), h = min(h, H - y);
+  if ((!dx && !dy) || w <= 0 || h <= 0) return;
+  canvas.setScrollRect(x, y, w, h);
+  canvas.scroll(dx, dy);
+}
+
+// The motion part: skew, then the whole picture off its place, with colour fringes on the edges it left.
+void drawMotion() {
+  auto& d = canvas;
+  int W = d.width(), H = d.height();
+  d.setBaseColor(C_BLACK);
+  int top = (int)skew.x;
+  if (top) for (int y = 0; y < H; y += 5) scrollArea(0, y, W, 5, top * (H / 2 - y) / (H / 2), 0);
+  int dx = (int)shiftX.x, dy = (int)shiftY.x;
+  scrollArea(0, 0, W, H, dx, dy);
+  d.clearScrollRect();
+  if (dx > 1) d.drawFastVLine(dx - 1, 0, H, C_CYAN);
+  if (dx < -1) d.drawFastVLine(W + dx, 0, H, rgb(255, 0, 200));
+  if (dy > 1) d.drawFastHLine(0, dy - 1, W, C_CYAN);
+  if (dy < -1) d.drawFastHLine(0, H + dy, W, rgb(255, 0, 200));
+}
+
+void drawImpact(unsigned long t) {
+  auto& d = canvas;
+  int W = d.width(), H = d.height();
+  drawMotion();
+  float k = fxLevel(t);
+  if (k <= 0) return;
+  unsigned long e = t - fxAt;
+  const uint16_t BROKEN[] = {C_CYAN, rgb(255, 0, 200), C_GREEN, C_WHITE};
+  d.setBaseColor(C_BLACK);
+  int lean = shiftX.v > 0 ? 1 : -1;  // tears lean the way the picture is swinging
+  for (int i = 0, n = 1 + (int)(k * 6); i < n; i++) {  // new ones every frame, so the picture shudders
+    int y = esp_random() % H, h = 2 + esp_random() % (3 + (int)(12 * k));
+    scrollArea(0, y, W, h, lean * (int)(esp_random() % (1 + (int)(30 * k))), 0);
+  }
+  if (fxKind >= K_STRIKE && e < WAVE_MS) {  // the wave: a band of torn pixels crossing from where the hit came
+    float p = e / (float)WAVE_MS;
+    bool across = waveFrom == SIDE_LEFT || waveFrom == SIDE_RIGHT;
+    int span = across ? W : H, at = (int)(p * span);
+    if (waveFrom == SIDE_RIGHT || waveFrom == SIDE_BOTTOM) at = span - at;
+    for (int i = 0; i < 6; i++) {
+      int off = at - 12 + (int)(esp_random() % 24), len = 4 + esp_random() % 14, jolt = (int)(esp_random() % 17) - 8;
+      if (across) scrollArea(off, 0, len, H, 0, jolt);
+      else scrollArea(0, off, W, len, jolt, 0);
+    }
+    d.clearScrollRect();
+    for (int i = 0; i < 10; i++) {
+      int a = at - 10 + (int)(esp_random() % 20), b = esp_random() % (across ? H : W);
+      if (across) d.fillRect(a, b, 2 + esp_random() % 5, 1 + esp_random() % 6, BROKEN[esp_random() % 4]);
+      else d.fillRect(b, a, 1 + esp_random() % 6, 2 + esp_random() % 5, BROKEN[esp_random() % 4]);
+    }
+  }
+  d.clearScrollRect();
+  uint32_t s = fxSeed;
+  for (int i = 0, n = (int)(k * 5 + 0.5f); i < n; i++) d.drawFastVLine(fxRand(s) % W, 0, H, BROKEN[fxRand(s) % 4]);
+  for (int i = 0, n = (int)(k * 12); i < n; i++)
+    d.fillRect(esp_random() % W, esp_random() % H, 2 + esp_random() % 10, 1 + esp_random() % 4, BROKEN[esp_random() % 4]);
+  if (fxKind == K_DROP && e > 250) {
+    chamfer(28, 46, W - 56, 42, 6, C_BLACK, true);
+    chamfer(28, 46, W - 56, 42, 6, C_RED, false);
+    drawText("IMPACT DETECTED", W / 2, 59, middle_center, C_RED);
+    char line[24];
+    snprintf(line, sizeof line, "RECALIBRATING%.*s", (int)(e / 250 % 4), "...");
+    drawText(line, W / 2, 76, middle_center, C_ACCENT);
+  }
+}
+
+void senseImpact(Sound sound, unsigned long t) {
+  static unsigned long last = 0;
+  if (!cfg.impact || screenOff || portalOn || isAlarm(sound)) {  // an alarm stays readable
+    shiftX = shiftY = skew = Spring{};
+    last = t;
+    return;
+  }
+  if (t - last < 20) return;
+  float dt = min(0.05f, (t - last) / 1000.0f);
+  last = t;
+  float ax = 0, ay = 0, az = 0, rx = 0, ry = 0, rz = 0;
+  if (!M5.Imu.getAccel(&ax, &ay, &az)) return;
+  M5.Imu.getGyro(&rx, &ry, &rz);
+  float g = sqrtf(ax * ax + ay * ay + az * az);
+  if (g > 0.85f && g < 1.15f) gravX += (ax - gravX) * 0.08f, gravY += (ay - gravY) * 0.08f, gravZ += (az - gravZ) * 0.08f;
+  float right = AXIS_RIGHT(ax - gravX, ay - gravY), down = AXIS_DOWN(ax - gravX, ay - gravY);  // motion, in g
+  float floorRight = AXIS_RIGHT(gravX, gravY), floorDown = AXIS_DOWN(gravX, gravY);       // where the floor is
+  Knock k = senseKnock(knock, g, t, cfg.impact);
+  bool falling = knock.fallSince && t - knock.fallSince >= FREEFALL_MS;
+#ifdef IMU_DEBUG
+  static unsigned long printed = 0;
+  if (t - printed >= 200) {
+    printed = t;
+    Serial.printf("imu g %.2f  floor right %.2f down %.2f  motion right %.2f down %.2f  twist %.0f\n", g, floorRight, floorDown, right, down, rz);
+  }
+#endif
+  // The picture lags behind the motion. On Low only knocks move it, on High any brisk motion does.
+  bool brisk = cfg.impact == 2 && right * right + down * down > 0.12f;
+  if (brisk || k != K_NONE) {
+    float push = 2500 * dt * (k != K_NONE ? 2 : 1);
+    shiftX.v -= right * push;
+    shiftY.v -= down * push;
+  }
+  if (cfg.impact == 2 && fabsf(rz) > 150) skew.v += rz * 0.5f * dt * 50;
+  if (falling) shiftX.v -= floorRight * 400 * dt, shiftY.v -= floorDown * 400 * dt;  // weightless: it floats up
+  if (k == K_DROP) shiftX.v += floorRight * 900, shiftY.v += floorDown * 900;        // and lands hard
+  shiftX.step(dt, 40);
+  shiftY.step(dt, 30);
+  skew.step(dt, 30);
+  if (k == K_NONE || (fxLevel(t) > 0 && k < fxKind)) return;
+  if (k >= K_STRIKE) waveFrom = hitSide(right, down);
+  fxKind = k, fxAt = t, fxSeed = esp_random() | 1;
+  lastDraw = 0;
+}
+
 void render(Sound sound, Link link, long long now, unsigned long t) {
   bool alarm = isAlarm(sound);
   bool on = alarm && flashPhase(t, sound == S_BALLISTIC ? FLASH_FAST_MS : FLASH_MS);
@@ -1270,7 +1429,10 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
   if (screenOff) wanted = 0;
   if (wanted != brightness) M5.Display.setBrightness(brightness = wanted);
   // The ticker and the glitch move; in saver mode the screen stays still to spare the battery.
-  bool moving = due(glitchUntil, t) || menuAnimating(t) || t - wokeAt < WAKE_MS + 30;
+  if (alarm) fxKind = K_NONE;
+  bool invert = fxKind >= K_STRIKE && t - fxAt < INVERT_MS;
+  if (invert != inverted) M5.Display.invertDisplay(inverted = invert);
+  bool moving = due(glitchUntil, t) || menuAnimating(t) || t - wokeAt < WAKE_MS + 30 || fxMoving(t);
   unsigned long every = moving ? 30 : saverNow ? DRAW_SAVER_MS : DRAW_MS;
   if (screenOff || (!alarm && t - lastDraw < every)) return;
   lastDraw = t;
@@ -1300,6 +1462,7 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
     }
   }
   if (!alarm) drawGlitch(t);
+  if (!alarm) drawImpact(t);
   if (!alarm && t - wokeAt < WAKE_MS) crtOpen((t - wokeAt) / (float)WAKE_MS);
   canvas.pushSprite(0, 0);
 }
@@ -1365,6 +1528,7 @@ void activateMenuItem(unsigned long t) {
     case MI_POWER: cfg.power = stepIndex(cfg.power, 3, 1); saveSettings(); break;
     case MI_BRIGHT: cfg.bright = stepIndex(cfg.bright, 3, 1); saveSettings(); break;
     case MI_VOLUME: cfg.volume = stepIndex(cfg.volume, 3, 1); saveSettings(); chimePending = true; break;
+    case MI_IMPACT: cfg.impact = stepIndex(cfg.impact, 3, 1); saveSettings(); break;
     case MI_THEME:
       cfg.theme = stepIndex(cfg.theme, THEME_COUNT, 1);
       applyTheme();
@@ -1566,6 +1730,8 @@ void loop() {
     }
     sound = due(testUntil, t) ? S_SIREN : wantedSound(ringer, hasData, view, link, night);
   }
+
+  senseImpact(sound, t);
 
   // Turned face down and left there: the same as pressing a button.
   if (cfg.flip && !saverNow && isAlarm(sound) && t - lastFlipCheck >= 100) {

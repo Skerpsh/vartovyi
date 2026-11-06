@@ -244,6 +244,33 @@ int main() {
   assert(!becameClear(L_NONE, L_NONE) && !becameClear(L_RED, L_YELLOW));
   assert(flashPhase(0, 150) && flashPhase(149, 150) && !flashPhase(150, 150) && flashPhase(300, 150));
 
+  // Knocks: a swing only on High, a hit on both, a fall that lands is a drop, and one knock counts once
+  KnockSense ks{};
+  assert(senseKnock(ks, 2.5f, 1000, 1) == K_NONE && senseKnock(ks, 2.5f, 2000, 2) == K_SWING);
+  assert(senseKnock(ks, 2.6f, 2020, 2) == K_NONE);                       // the same swing, next sample
+  assert(senseKnock(ks, 4.2f, 3000, 1) == K_STRIKE && senseKnock(ks, 3.7f, 4000, 1) == K_NONE);
+  assert(senseKnock(ks, 3.7f, 5000, 2) == K_STRIKE);
+  assert(senseKnock(ks, 1.0f, 6000, 0) == K_NONE && senseKnock(ks, 9.0f, 6100, 0) == K_NONE);  // off
+  ks = KnockSense{};
+  for (unsigned long t = 10000; t <= 10200; t += 20) assert(senseKnock(ks, 0.1f, t, 1) == K_NONE);
+  assert(senseKnock(ks, 2.5f, 10220, 1) == K_DROP);                       // landed: under the strike limit, still a drop
+  assert(senseKnock(ks, 2.5f, 10240, 1) == K_NONE);
+  ks = KnockSense{};
+  senseKnock(ks, 0.1f, 20000, 1);
+  senseKnock(ks, 0.1f, 20100, 1);
+  assert(senseKnock(ks, 1.0f, 21500, 1) == K_NONE && senseKnock(ks, 2.5f, 21520, 1) == K_NONE);  // caught, set down later
+  ks = KnockSense{};
+  assert(senseKnock(ks, 0.1f, 30000, 1) == K_NONE && senseKnock(ks, 2.5f, 30040, 1) == K_NONE);  // a dip, not a fall
+
+  // The spring settles, and never leaves its limit
+  Spring sp{0, 500};
+  for (int i = 0; i < 100; i++) {
+    sp.step(0.02f, 40);
+    assert(sp.x <= 40 && sp.x >= -40);
+  }
+  assert(!sp.moving());
+  assert(hitSide(3, 0.5f) == SIDE_LEFT && hitSide(-3, 1) == SIDE_RIGHT && hitSide(0.2f, 2) == SIDE_TOP && hitSide(0, -2) == SIDE_BOTTOM);
+
   // Night hours
   assert(isNightHour(23, 23, 7) && isNightHour(0, 23, 7) && isNightHour(6, 23, 7));
   assert(!isNightHour(7, 23, 7) && !isNightHour(22, 23, 7));

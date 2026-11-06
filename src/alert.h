@@ -414,6 +414,58 @@ inline bool remindDue(Level level, bool night, unsigned long sinceRing) {
 // Screen flash and LED during an alarm, from the same clock so they stay in step.
 inline bool flashPhase(unsigned long ms, unsigned long periodMs) { return ms % (2 * periodMs) < periodMs; }
 
+// ---------- knocks ----------
+// From the accelerometer's total force in g: a free fall reads near 0, a hit or a sharp swing well over 1.
+
+enum Knock { K_NONE, K_SWING, K_STRIKE, K_DROP };  // in order of how hard
+struct KnockSense {
+  unsigned long fallSince, fellAt, lastAt;
+  bool fell;
+};
+const float FREEFALL_G = 0.35f, LANDING_G = 2.0f, SWING_G = 2.2f, STRIKE_LOW_G = 4.0f, STRIKE_HIGH_G = 3.5f;
+const unsigned long FREEFALL_MS = 80, LAND_WITHIN_MS = 1000, KNOCK_GAP_MS = 300;
+
+// level: 0 off, 1 only hits and drops, 2 also sharp swings.
+inline Knock senseKnock(KnockSense& s, float g, unsigned long t, int level) {
+  if (!level) return K_NONE;
+  if (g < FREEFALL_G) {
+    if (!s.fallSince) s.fallSince = t;
+    if (t - s.fallSince >= FREEFALL_MS) s.fell = true, s.fellAt = t;
+    return K_NONE;
+  }
+  s.fallSince = 0;
+  if (s.fell && t - s.fellAt > LAND_WITHIN_MS) s.fell = false;  // caught in the air: no landing
+  Knock k = K_NONE;
+  if (s.fell && g >= LANDING_G) k = K_DROP;
+  else if (g >= (level == 2 ? STRIKE_HIGH_G : STRIKE_LOW_G)) k = K_STRIKE;
+  else if (level == 2 && g >= SWING_G) k = K_SWING;
+  if (k == K_NONE) return K_NONE;
+  if (k != K_DROP && s.lastAt && t - s.lastAt < KNOCK_GAP_MS) return K_NONE;  // one knock lasts several samples
+  s.fell = false;
+  s.lastAt = t;
+  return k;
+}
+
+// The picture hangs on a damped spring: a push moves it, then it swings back and settles.
+struct Spring {
+  float x, v;  // offset in pixels, and its speed in pixels per second
+  void step(float dt, float limit) {
+    const float STIFF = 360, DAMP = 9;  // about 3 swings a second, quiet within a second or so
+    v += (-STIFF * x - DAMP * v) * dt;
+    x += v * dt;
+    if (x > limit) x = limit, v = 0;
+    if (x < -limit) x = -limit, v = 0;
+  }
+  bool moving() const { return x > 0.5f || x < -0.5f || v > 5 || v < -5; }
+};
+
+enum Side { SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM };
+// A hit from the left pushes the stick to the right: the side it came from is opposite the push.
+inline Side hitSide(float right, float down) {
+  if ((right < 0 ? -right : right) >= (down < 0 ? -down : down)) return right > 0 ? SIDE_LEFT : SIDE_RIGHT;
+  return down > 0 ? SIDE_TOP : SIDE_BOTTOM;
+}
+
 // ---------- small helpers ----------
 
 inline bool isNightHour(int hour, int start, int end) {
