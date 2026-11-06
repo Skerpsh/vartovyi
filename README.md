@@ -1,7 +1,26 @@
+<div align="center">
+
 # Vartovyi
 
-Повітряні тривоги Києва та Київської області на [M5StickC Plus2](https://docs.m5stack.com/en/core/M5StickC%20PLUS2): сирена, кольоровий екран, історія і статистика.
-Дані офіційні, з [api.ukrainealarm.com](https://api.ukrainealarm.com), без Telegram і сторонніх каналів.
+**Повітряні тривоги Києва та області на [M5StickC Plus2](https://docs.m5stack.com/en/core/M5StickC%20PLUS2)**<br>
+Сирена, кольоровий екран, історія і статистика. Офіційні дані [api.ukrainealarm.com](https://api.ukrainealarm.com).
+
+[![build](https://github.com/Skerpsh/vartovyi/actions/workflows/build.yml/badge.svg)](https://github.com/Skerpsh/vartovyi/actions/workflows/build.yml)
+[![release](https://img.shields.io/github/v/release/Skerpsh/vartovyi)](https://github.com/Skerpsh/vartovyi/releases/latest)
+[![license](https://img.shields.io/github/license/Skerpsh/vartovyi)](LICENSE)
+
+**[Прошити стік у браузері →](https://skerpsh.github.io/vartovyi/)**
+
+<sub>Air-raid alerts for Kyiv on an M5StickC Plus2, from the official Ukrainian alert API. Flash it from the browser, set Wi-Fi from your phone.</sub>
+
+</div>
+
+## Можливості
+
+- Сирена при тривозі, окремий звук для балістики, тихіші сигнали для дронів і відбою.
+- Зони Києва й області на вибір, нічний режим, вимкнення звуку переворотом стіка екраном донизу.
+- Історія та статистика тривог, рівень заряду, кілька Wi-Fi мереж за пріоритетом.
+- Оновлення по Wi-Fi з автоматичним відкатом, якщо нова версія не запрацювала.
 
 ## Прошити стік
 
