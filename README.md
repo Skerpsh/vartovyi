@@ -9,6 +9,8 @@
 [![release](https://img.shields.io/github/v/release/Skerpsh/vartovyi)](https://github.com/Skerpsh/vartovyi/releases/latest)
 [![license](https://img.shields.io/github/license/Skerpsh/vartovyi)](LICENSE)
 
+<img src="docs/stick.jpg" alt="M5StickC Plus2 з прошивкою Vartovyi: годинник, напис ALL CLEAR і рядок Watching Kyiv" width="560">
+
 **[Прошити стік у браузері →](https://skerpsh.github.io/vartovyi/)**
 
 <sub>Air-raid alerts for any Ukrainian oblast and its raions on an M5StickC Plus2, from the official alert API. Flash it from the browser, set it up from your phone.</sub>
