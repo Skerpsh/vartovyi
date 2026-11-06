@@ -26,7 +26,7 @@
 const unsigned long POLL_MS = 3000, POLL_SAVER_MS = 6000;
 const unsigned long WIFI_RETRY_MS = 15000, WIFI_JOIN_MS = 12000;
 const unsigned long HISTORY_EVERY_MS = 60000;
-const unsigned long FLASH_MS = 150, FLASH_FAST_MS = 80, DRAW_MS = 250;
+const unsigned long FLASH_MS = 150, FLASH_FAST_MS = 80, DRAW_MS = 90, DRAW_SAVER_MS = 500;
 const unsigned long TRIAL_MS = 300000;    // a new firmware that reaches no server in this time gives way to the old one
 const int TRIAL_BOOTS = 3;
 const uint8_t BRIGHT_LEVELS[] = {30, 70, 140}, VOLUME_LEVELS[] = {90, 170, 255};
@@ -43,10 +43,11 @@ const uint8_t BRIGHT_SAVER = 40, BRIGHT_ACTIVE = 160, BRIGHT_ALARM = 255;
 const char* const AP_NAME = "Vartovyi";
 
 constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
-const uint16_t C_BG = rgb(13, 17, 23), C_PANEL = rgb(28, 34, 43), C_LINE = rgb(52, 60, 72);
-const uint16_t C_TEXT = rgb(236, 240, 245), C_MUTED = rgb(138, 148, 162);
-const uint16_t C_GREEN = rgb(52, 211, 153), C_DEEP_GREEN = rgb(6, 95, 70), C_AMBER = rgb(251, 191, 36), C_BLUE = rgb(96, 165, 250);
-const uint16_t C_ORANGE = rgb(249, 115, 22), C_RED = rgb(239, 40, 40), C_BLACK = rgb(0, 0, 0), C_WHITE = rgb(255, 255, 255);
+// The chrome is the orange of the stick's case; danger keeps its own colours.
+const uint16_t C_BG = rgb(5, 5, 7), C_SCAN = rgb(17, 13, 9), C_PANEL = rgb(30, 19, 6), C_DIM = rgb(105, 60, 10);
+const uint16_t C_ORANGE = rgb(255, 156, 0), C_TEXT = rgb(255, 238, 214), C_MUTED = rgb(150, 124, 96);
+const uint16_t C_GREEN = rgb(57, 255, 20), C_CYAN = rgb(0, 229, 255), C_YELLOW = rgb(255, 228, 0);
+const uint16_t C_RED = rgb(255, 32, 56), C_BLACK = rgb(0, 0, 0), C_WHITE = rgb(255, 255, 255);
 
 struct FetchResult {
   int code;
@@ -67,10 +68,9 @@ const Step CHIME[] = {{2000, 150}, {0, 40}, {2600, 150}, {0, 40}, {3300, 450}};
 const Step SOFT[] = {{2600, 120}, {0, 80}};
 const Step BALLISTIC[] = {{3700, 110}, {2300, 110}};
 
-enum Page { P_HOME, P_MAP, P_DETAILS, P_HISTORY, P_STATS, P_SETTINGS, PAGE_COUNT };
-const char* const PAGE_NAMES[] = {"VARTOVYI", "MAP", "ACTIVE", "HISTORY", "STATS", "SETTINGS"};
+enum Page { P_HOME, P_MAP, P_DETAILS, P_HISTORY, P_STATS, P_SYSTEM, PAGE_COUNT };
 enum Menu { M_NONE, M_MAIN, M_ZONES, M_REGIONS };
-enum MenuItem { MI_REGION, MI_ZONES, MI_NIGHT, MI_FLIP, MI_POWER, MI_BRIGHT, MI_VOLUME, MI_TEST, MI_SETUP, MI_UPDATE, MI_NETWORK, MI_DELAY, MI_BACK, MI_COUNT };
+enum MenuItem { MI_REGION, MI_ZONES, MI_VOLUME, MI_BRIGHT, MI_NIGHT, MI_FLIP, MI_POWER, MI_TEST, MI_SETUP, MI_UPDATE, MI_COUNT };
 enum PowerMode { POWER_AUTO, POWER_NORMAL, POWER_SAVER };
 
 struct Settings {
@@ -119,7 +119,7 @@ long lastDelay = -1;
 
 Page page = P_HOME;
 Menu menu = M_NONE;
-int menuIndex = 0, scrollPos = 0;
+int menuIndex = 0;
 
 String apPass, apQr;
 String nearby[12];
@@ -349,14 +349,14 @@ String setupPage(const String& message) {
   String h;
   h.reserve(5000);
   h += F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Vartovyi</title><style>"
-         "body{margin:0;background:#0d1117;color:#ecf0f5;font:16px -apple-system,system-ui,sans-serif;padding:16px;max-width:560px}"
-         "h1{font-size:22px;margin:4px 0 16px}h2{font-size:15px;color:#8a94a2;text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px}"
-         "section{background:#1c222b;border-radius:14px;padding:14px;margin:0 0 14px}"
-         ".row{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #343c48}.row:first-of-type{border-top:0}.row span{flex:1;overflow-wrap:anywhere}"
-         "input[type=text],input[type=password],input[type=number],select{width:100%;box-sizing:border-box;background:#0d1117;color:#ecf0f5;border:1px solid #343c48;border-radius:10px;padding:11px;font-size:16px;margin:0 0 8px}"
-         "button{background:#34d399;color:#06281e;border:0;border-radius:10px;padding:11px 16px;font-size:16px;font-weight:600}"
-         "button.s{background:#343c48;color:#ecf0f5;padding:7px 11px;font-size:14px;font-weight:500}label{display:flex;gap:10px;align-items:center;padding:7px 0}"
-         "input[type=checkbox]{width:20px;height:20px}.tip,.msg{font-size:14px;color:#8a94a2}.msg{color:#34d399;margin:0 0 12px}.times{display:flex;gap:8px}"
+         "body{margin:0;background:#050507;color:#ffeed6;font:16px ui-monospace,Menlo,Consolas,monospace;padding:16px;max-width:560px}"
+         "h1{font-size:22px;margin:4px 0 16px;color:#ff9c00;letter-spacing:.1em}h2{font-size:15px;color:#ff9c00;text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px}"
+         "section{background:#1e1306;border-left:3px solid #ff9c00;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%);padding:14px;margin:0 0 14px}"
+         ".row{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #693c0a}.row:first-of-type{border-top:0}.row span{flex:1;overflow-wrap:anywhere}"
+         "input[type=text],input[type=password],input[type=number],select{width:100%;box-sizing:border-box;background:#050507;color:#ffeed6;border:1px solid #693c0a;border-radius:0;padding:11px;font-size:16px;margin:0 0 8px}"
+         "button{background:#ff9c00;color:#000;border:0;border-radius:0;padding:11px 16px;font-size:16px;font-weight:600}"
+         "button.s{background:#693c0a;color:#ffeed6;padding:7px 11px;font-size:14px;font-weight:500}label{display:flex;gap:10px;align-items:center;padding:7px 0}"
+         "input[type=checkbox]{width:20px;height:20px}.tip,.msg{font-size:14px;color:#967c60}.msg{color:#39ff14;margin:0 0 12px}.times{display:flex;gap:8px}"
          "</style></head><body><h1>Vartovyi</h1>");
   if (message.length()) h += "<p class=msg>" + htmlEscape(message) + "</p>";
 
@@ -516,7 +516,7 @@ void setupRoutes() {
   server.on("/region", HTTP_POST, saveRegion);
   server.on("/night", HTTP_POST, saveNight);
   server.on("/done", HTTP_POST, [] {
-    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=viewport content='width=device-width'><body style='background:#0d1117;color:#ecf0f5;font:18px system-ui;padding:24px'>Setup closed. You can leave this network.");
+    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=viewport content='width=device-width'><body style='background:#050507;color:#ff9c00;font:18px ui-monospace,monospace;padding:24px'>Setup closed. You can leave this network.");
     portalStopRequested = true;
   });
   // Any other address, like the iPhone's captive portal check, leads to the page, so it opens by itself.
@@ -562,45 +562,64 @@ void stopPortal() {
 }
 
 // ---------- drawing ----------
+// Cyberdeck look: black glass with scanlines, the stick's orange for the chrome, cut corners, a short glitch
+// when the screen changes. The colours of danger stay apart from the chrome: red, yellow, and neon green for clear.
 
-void drawBattery(int right, int y, uint16_t fg) {
-  if (battery < 0) return;
-  auto& d = canvas;
-  const int W = 22, H = 11;
-  int x = right - W - 3;
-  uint16_t fill = fg != C_MUTED ? fg : battery <= 15 ? C_RED : battery <= 35 ? C_AMBER : C_GREEN;
-  d.drawRoundRect(x, y, W, H, 3, fg);
-  d.fillRect(x + W, y + 3, 2, H - 6, fg);
-  int inner = constrain(battery, 0, 100) * (W - 4) / 100;
-  if (inner > 0) d.fillRect(x + 2, y + 2, inner, H - 4, fill);
-  char text[8];
-  snprintf(text, sizeof text, "%d%%", battery);
-  d.setFont(&fonts::Font2);
-  d.setTextDatum(middle_right);
-  d.setTextColor(fg);
-  d.drawString(text, x - 4, y + H / 2);
+const int HEAD_H = 17, FOOT_Y = 120;  // content lives between them
+
+void scanlines() {
+  canvas.fillScreen(C_BG);
+  for (int y = 1; y < canvas.height(); y += 3) canvas.drawFastHLine(0, y, canvas.width(), C_SCAN);
 }
 
-// The biggest font that fits the screen width.
-void drawFitted(const char* text, int y, uint16_t color) {
-  static const lgfx::IFont* const FONTS[] = {&fonts::FreeSansBold24pt7b, &fonts::FreeSansBold18pt7b, &fonts::FreeSansBold12pt7b,
-                                             &fonts::FreeSansBold9pt7b, &fonts::Font2};
+// A panel with two corners cut off, the shape everything here is made of.
+void chamfer(int x, int y, int w, int h, int c, uint16_t color, bool fill) {
   auto& d = canvas;
-  for (auto font : FONTS) {
-    d.setFont(font);
-    if (d.textWidth(text) <= d.width() - 12 || font == FONTS[4]) break;
+  if (fill) {
+    d.fillRect(x, y + c, w, h - 2 * c, color);
+    d.fillRect(x + c, y, w - c, c, color);
+    d.fillRect(x, y + h - c, w - c, c, color);
+    d.fillTriangle(x, y + c, x + c, y, x + c, y + c, color);
+    d.fillTriangle(x + w - c - 1, y + h - c - 1, x + w - 1, y + h - c - 1, x + w - c - 1, y + h - 1, color);
+  } else {
+    d.drawLine(x + c, y, x + w - 1, y, color);
+    d.drawLine(x + w - 1, y, x + w - 1, y + h - c - 1, color);
+    d.drawLine(x + w - 1, y + h - c - 1, x + w - c - 1, y + h - 1, color);
+    d.drawLine(x + w - c - 1, y + h - 1, x, y + h - 1, color);
+    d.drawLine(x, y + h - 1, x, y + c, color);
+    d.drawLine(x, y + c, x + c, y, color);
   }
-  d.setTextDatum(middle_center);
-  d.setTextColor(color);
-  d.drawString(text, d.width() / 2, y);
 }
 
-void drawSmall(const char* text, int x, int y, uint8_t datum, uint16_t color) {
-  canvas.setFont(&fonts::Font2);
+// HUD corner marks around a box.
+void brackets(int x, int y, int w, int h, uint16_t color) {
+  auto& d = canvas;
+  const int L = 7;
+  d.drawFastHLine(x, y, L, color), d.drawFastVLine(x, y, L, color);
+  d.drawFastHLine(x + w - L, y, L, color), d.drawFastVLine(x + w - 1, y, L, color);
+  d.drawFastHLine(x, y + h - 1, L, color), d.drawFastVLine(x, y + h - L, L, color);
+  d.drawFastHLine(x + w - L, y + h - 1, L, color), d.drawFastVLine(x + w - 1, y + h - L, L, color);
+}
+
+// Black and colour stripes, as on a hazard sign.
+void hazard(int y, int h, uint16_t color) {
+  auto& d = canvas;
+  d.fillRect(0, y, d.width(), h, C_BLACK);
+  for (int x = -h; x < d.width(); x += 14) {
+    d.fillTriangle(x, y + h, x + h, y, x + h + 7, y, color);
+    d.fillTriangle(x, y + h, x + h + 7, y, x + 7, y + h, color);
+  }
+}
+
+void drawText(const char* text, int x, int y, uint8_t datum, uint16_t color, const lgfx::IFont* font = &fonts::Font2) {
+  canvas.setFont(font);
+  canvas.setTextSize(1);
   canvas.setTextDatum(datum);
   canvas.setTextColor(color);
   canvas.drawString(text, x, y);
 }
+
+void drawSmall(const char* text, int x, int y, uint8_t datum, uint16_t color) { drawText(text, x, y, datum, color); }
 
 void drawClipped(const char* text, int x, int y, int width, uint16_t color) {
   canvas.setClipRect(x, y - 9, width, 18);
@@ -608,12 +627,53 @@ void drawClipped(const char* text, int x, int y, int width, uint16_t color) {
   canvas.clearClipRect();
 }
 
+// The biggest font that fits the width.
+void drawFitted(const char* text, int y, uint16_t color, int width = 228) {
+  static const lgfx::IFont* const FONTS[] = {&fonts::FreeSansBold24pt7b, &fonts::FreeSansBold18pt7b, &fonts::FreeSansBold12pt7b,
+                                             &fonts::FreeSansBold9pt7b, &fonts::Font2};
+  auto& d = canvas;
+  d.setTextSize(1);
+  for (auto font : FONTS) {
+    d.setFont(font);
+    if (d.textWidth(text) <= width || font == FONTS[4]) break;
+  }
+  d.setTextDatum(middle_center);
+  d.setTextColor(color);
+  d.drawString(text, d.width() / 2, y);
+}
+
+// Seven-segment digits, shrunk to fit: the clock and the alert timers.
+void drawSegments(const char* text, int x, int y, uint16_t color, int width) {
+  auto& d = canvas;
+  d.setFont(&fonts::Font7);
+  d.setTextSize(1);
+  int w = d.textWidth(text);
+  if (w > width) d.setTextSize((float)width / w);
+  d.setTextDatum(middle_center);
+  d.setTextColor(color);
+  d.drawString(text, x, y);
+  d.setTextSize(1);
+}
+
+void drawBattery(int right, int y, uint16_t fg) {
+  if (battery < 0) return;
+  auto& d = canvas;
+  const int SEG = 5, W = 4, GAP = 1;
+  int x = right - SEG * (W + GAP);
+  uint16_t fill = fg != C_MUTED ? fg : battery <= 15 ? C_RED : battery <= 35 ? C_YELLOW : C_ORANGE;
+  int lit = (constrain(battery, 0, 100) + 19) / 20;
+  for (int i = 0; i < SEG; i++) d.fillRect(x + i * (W + GAP), y, W, 9, i < lit ? fill : C_DIM);
+  char text[8];
+  snprintf(text, sizeof text, usb ? "+%d%%" : "%d%%", battery);
+  drawText(text, x - 3, y + 5, middle_right, fg == C_MUTED ? C_TEXT : fg);
+}
+
 uint16_t levelColor(Level l) {
   switch (l) {
     case L_NONE: return C_GREEN;
-    case L_LOST: return C_BLUE;
-    case L_ALERT: return C_ORANGE;
-    case L_YELLOW: return C_AMBER;
+    case L_LOST: return C_CYAN;
+    case L_ALERT:
+    case L_YELLOW: return C_YELLOW;
     default: return C_RED;
   }
 }
@@ -636,90 +696,149 @@ bool nightNow(long long now) {
   return localtime_r(&raw, &local) && isNightHour(local.tm_hour, cfg.nightStart, cfg.nightEnd);
 }
 
-// Alternates a solid colour with black, readable from across the room.
-void drawAlarm(const char* title, const char* line1, const char* line2, const char* hint, uint16_t color, bool on) {
+uint16_t linkColor(Link link) { return link == LINK_WAIT ? C_MUTED : linkIsBad(link) ? C_YELLOW : C_GREEN; }
+
+// [02] MAP //VARTOVYI ............ link  battery
+void drawHeader(const char* name, int number, Link link) {
+  auto& d = canvas;
+  scanlines();
+  char num[4];
+  snprintf(num, sizeof num, "%02d", number);
+  chamfer(0, 0, 22, 15, 4, C_ORANGE, true);
+  drawText(num, 11, 8, middle_center, C_BLACK);
+  drawText(name, 27, 8, middle_left, C_ORANGE);
+  d.setFont(&fonts::Font2);
+  drawText("//VARTOVYI", 27 + d.textWidth(name) + 3, 9, middle_left, C_DIM, &fonts::Font0);
+  d.fillRect(d.width() - 85, 4, 7, 7, linkColor(link));
+  drawBattery(d.width() - 2, 3, C_MUTED);
+  d.drawFastHLine(0, 16, d.width(), C_DIM);
+  d.drawFastHLine(0, 16, 60, C_ORANGE);
+}
+
+// What each button does here, pointing at it: the right side button sits on top, power at the bottom, M5 to the right.
+void drawFooter(const char* next, const char* back, const char* ok) {
+  auto& d = canvas;
+  d.drawFastHLine(0, FOOT_Y, d.width(), C_DIM);
+  int x = 4, y = FOOT_Y + 8;
+  if (next[0]) {
+    d.fillTriangle(x, y + 4, x + 8, y + 4, x + 4, y - 4, C_ORANGE);
+    drawText(next, x + 12, y, middle_left, C_TEXT);
+  }
+  x = 86;
+  if (back[0]) {
+    d.fillTriangle(x, y - 4, x + 8, y - 4, x + 4, y + 4, C_ORANGE);
+    drawText(back, x + 12, y, middle_left, C_TEXT);
+  }
+  if (ok[0]) {
+    d.setFont(&fonts::Font2);
+    int w = d.textWidth(ok) + 30;
+    chamfer(d.width() - w, FOOT_Y + 2, w, 13, 3, C_ORANGE, true);
+    drawText("M5", d.width() - w + 5, y, middle_left, C_BLACK, &fonts::Font0);
+    drawText(ok, d.width() - 4, y, middle_right, C_BLACK);
+  }
+}
+
+void drawPageFooter() { drawFooter("NEXT", page == P_HOME ? "" : "HOME", "MENU"); }
+
+// A short burst of torn lines and colour fringes after the screen changes.
+unsigned long glitchUntil = 0;
+void glitch(unsigned long t) { glitchUntil = t + 220; }
+void drawGlitch(unsigned long t) {
+  if (!due(glitchUntil, t)) return;
+  auto& d = canvas;
+  for (int i = 0; i < 5; i++) {
+    int y = esp_random() % d.height(), h = 1 + esp_random() % 3, x = esp_random() % d.width();
+    d.fillRect(x, y, 20 + esp_random() % 120, h, i % 2 ? C_CYAN : C_ORANGE);
+  }
+  int y = 20 + esp_random() % 80;
+  d.fillRect(0, y, d.width(), 2, C_BLACK);
+}
+
+// Alternates a solid colour with black, readable from across the room, with hazard stripes top and bottom.
+void drawAlarm(const char* title, const char* line1, const char* line2, uint16_t color, bool on) {
   auto& d = canvas;
   uint16_t bg = on ? color : C_BLACK;
   uint16_t fg = on ? onColor(color) : color;
   d.fillScreen(bg);
-  drawBattery(d.width() - 6, 5, fg);
-  drawFitted(title, 42, fg);
-  drawFitted(line1, 80, fg);
-  if (line2[0]) drawSmall(line2, d.width() / 2, 103, top_center, fg);
-  drawSmall(hint, d.width() / 2, 118, top_center, fg);
+  hazard(0, 12, color);
+  hazard(d.height() - 12, 12, color);
+  drawFitted(title, 38, fg);
+  drawFitted(line1, 72, fg, 220);
+  if (line2[0]) drawText(line2, d.width() / 2, 98, middle_center, fg);
+  chamfer(d.width() / 2 - 58, d.height() - 14, 116, 14, 4, C_BLACK, true);
+  drawText("ANY KEY = SILENCE", d.width() / 2, d.height() - 7, middle_center, color, &fonts::Font0);
 }
 
-// Every normal page: its name, dots for where you are, the battery.
-void drawHeader(uint16_t dot) {
-  auto& d = canvas;
-  d.fillScreen(C_BG);
-  d.fillCircle(9, 10, 4, dot);
-  drawSmall(PAGE_NAMES[page], 18, 10, middle_left, C_TEXT);
-  for (int i = 0; i < PAGE_COUNT; i++) {
-    int x = 100 + i * 9;
-    if (i == page) d.fillCircle(x, 10, 3, C_TEXT);
-    else d.fillCircle(x, 10, 2, C_LINE);
+const char* watchingText(char* line, size_t size) {
+  int watched = watchedCount(feed.list, cfg.zones);
+  if (watched == 1) {
+    for (int i = 0; i < feed.list.count; i++)
+      if (cfg.zones & (1u << i)) snprintf(line, size, "%s", feed.list.zones[i].name);
+  } else if (!feed.list.count || watched == feed.list.count) {
+    snprintf(line, size, "%s", cfg.oblastName);
+  } else {
+    snprintf(line, size, "%d of %d zones", watched, feed.list.count);
   }
-  drawBattery(d.width() - 5, 4, C_MUTED);
-  d.drawFastHLine(0, 21, d.width(), C_PANEL);
+  return line;
 }
 
-uint16_t linkDot(Link link) { return link == LINK_WAIT ? C_MUTED : linkIsBad(link) ? C_AMBER : C_GREEN; }
+// A line of status that runs right to left.
+void drawTicker(int y, long long now) {
+  auto& d = canvas;
+  char watch[32], text[160];
+  snprintf(text, sizeof text, "OBL %s  //  WATCH %s  //  NET %s %ddBm  //  SEQ %ld  //  %s  //  ", cfg.oblastName,
+           watchingText(watch, sizeof watch), WiFi.isConnected() ? WiFi.SSID().c_str() : "--", WiFi.isConnected() ? WiFi.RSSI() : 0,
+           feed.seq, nightNow(now) ? "NIGHT MODE" : saverNow ? "SAVER" : "VER " VERSION);
+  d.setFont(&fonts::Font2);
+  d.setTextSize(1);
+  int w = d.textWidth(text), shift = (millis() / 40) % w;
+  d.setClipRect(0, y - 8, d.width(), 16);
+  for (int x = -shift; x < d.width(); x += w) drawText(text, x, y, middle_left, C_MUTED);
+  d.clearClipRect();
+}
 
 void drawHome(Link link, long long now) {
   auto& d = canvas;
-  drawHeader(linkDot(link));
+  drawHeader("HOME", 1, link);
+  drawPageFooter();
   if (view.level != L_NONE) {  // an alert the user silenced: calm, and impossible to mistake for all clear
     uint16_t color = levelColor(view.level);
-    d.fillRect(0, 22, d.width(), 34, color);
-    drawFitted(viewTitle(view), 39, onColor(color));
+    chamfer(4, 21, d.width() - 8, 26, 6, color, true);
+    drawFitted(viewTitle(view), 34, onColor(color), 220);
     char timer[16] = "--:--:--";
     if (view.since && timeIsSynced(now)) formatTimer(now - view.since, timer, sizeof timer);
-    d.setFont(&fonts::FreeSansBold24pt7b);
-    d.setTextDatum(middle_center);
-    d.setTextColor(C_TEXT);
-    d.drawString(timer, d.width() / 2, 80);
+    drawSegments(timer, d.width() / 2, 73, color, 200);
     char line[64];
-    if (linkIsBad(link)) snprintf(line, sizeof line, "%s - last known state", linkTitle(link));
+    if (linkIsBad(link)) snprintf(line, sizeof line, "%s // LAST KNOWN STATE", linkTitle(link));
     else if (view.level == L_LOST) snprintf(line, sizeof line, "%s: may still be active", view.zone);
     else snprintf(line, sizeof line, "%s  %s", view.zone, view.threats);
-    drawSmall(line, d.width() / 2, 112, top_center, linkIsBad(link) ? C_AMBER : C_MUTED);
+    drawClipped(line, 6, 107, d.width() - 12, linkIsBad(link) ? C_YELLOW : C_TEXT);
     return;
   }
-  if (link == LINK_WAIT) {
-    drawFitted("Connecting...", 66, C_TEXT);
-    drawSmall(WiFi.status() == WL_CONNECTED ? "Reaching the server" : "Looking for Wi-Fi", d.width() / 2, 90, top_center, C_MUTED);
-    return;
-  }
-  if (linkIsBad(link)) {
-    drawFitted(linkTitle(link), 60, C_AMBER);
-    drawSmall("Alerts may be missed!", d.width() / 2, 84, top_center, C_TEXT);
+  if (link == LINK_WAIT || linkIsBad(link)) {
+    bool wait = link == LINK_WAIT;
+    brackets(8, 24, d.width() - 16, 70, wait ? C_ORANGE : C_YELLOW);
+    drawFitted(wait ? "LINKING" : linkTitle(link), 50, wait ? C_ORANGE : C_YELLOW, 200);
+    if (wait) {
+      for (int i = 0, lit = millis() / 150 % 12; i < 12; i++) d.fillRect(38 + i * 14, 74, 10, 6, i <= lit ? C_ORANGE : C_DIM);
+    } else {
+      drawText("ALERTS MAY BE MISSED", d.width() / 2, 78, middle_center, C_TEXT);
+    }
+    drawText(WiFi.status() == WL_CONNECTED ? "wi-fi up, reaching the server" : "searching for wi-fi", d.width() / 2, 106, middle_center, C_MUTED);
     return;
   }
   char clock[6] = "--:--";
   time_t raw = now;
   struct tm local;
   if (timeIsSynced(now) && localtime_r(&raw, &local)) strftime(clock, sizeof clock, "%H:%M", &local);
-  d.setFont(&fonts::Font7);
-  d.setTextDatum(middle_center);
-  d.setTextColor(C_TEXT);
-  d.drawString(clock, d.width() / 2, 52);
-  drawSmall("ALL CLEAR", d.width() / 2, 84, middle_center, C_GREEN);
-  int watched = watchedCount(feed.list, cfg.zones);
-  char line[36];
-  if (watched == 1) {
-    for (int i = 0; i < feed.list.count; i++)
-      if (cfg.zones & (1u << i)) snprintf(line, sizeof line, "Watching %s", feed.list.zones[i].name);
-  } else if (!feed.list.count || watched == feed.list.count) {
-    snprintf(line, sizeof line, "Watching %s", cfg.oblastName);
-  } else {
-    snprintf(line, sizeof line, "Watching %d zones", watched);
-  }
-  d.fillRoundRect(6, 100, d.width() - 12, 30, 7, C_PANEL);
-  drawClipped(line, 13, 115, 124, C_TEXT);
-  char right[32];
-  snprintf(right, sizeof right, "%s%s", nightNow(now) ? "Night  " : "", saverNow ? "Saver" : (WiFi.isConnected() ? WiFi.SSID().substring(0, 14).c_str() : ""));
-  drawSmall(right, d.width() - 13, 115, middle_right, C_MUTED);
+  brackets(30, 21, d.width() - 60, 54, C_DIM);
+  drawSegments(clock, d.width() / 2, 48, C_ORANGE, 170);
+  chamfer(4, 79, d.width() - 8, 20, 5, C_GREEN, false);
+  d.fillRect(10, 85, 8, 8, C_GREEN);
+  drawText("ALL CLEAR", 24, 89, middle_left, C_GREEN);
+  char watch[32];
+  drawClipped(watchingText(watch, sizeof watch), 112, 89, d.width() - 120, C_TEXT);
+  drawTicker(110, now);
 }
 
 const ZoneAlert* zoneAlert(int index) {
@@ -729,115 +848,146 @@ const ZoneAlert* zoneAlert(int index) {
 }
 
 // The oblast's zones as tiles, city first and the oblast itself last. Watched zones fill with the alert's colour,
-// the others only get an outline.
+// others only get an outline; a watched quiet zone has an orange frame, one you do not watch a dim one.
 void drawMap(Link link) {
   auto& d = canvas;
-  drawHeader(linkDot(link));
+  drawHeader("MAP", 2, link);
+  drawPageFooter();
   const ZoneList& l = feed.list;
   if (!l.count) {
-    drawFitted("Loading...", 72, C_MUTED);
+    drawFitted("LOADING", 68, C_DIM);
     return;
   }
-  const int X = 5, Y = 25, COLS = 3, TW = 74, GAP = 4;
+  const int X = 3, Y = 20, COLS = 3, TW = 76, GAP = 3;
   int rows = (l.count + 1 + COLS - 1) / COLS;  // one more cell counts the active zones
-  int TH = min(25, (d.height() - Y - 2 - (rows - 1) * GAP) / rows);
+  int TH = min(24, (FOOT_Y - Y - 2 - (rows - 1) * GAP) / rows);
   for (int i = 0; i < l.count; i++) {
-    int x = X + i % COLS * (TW + GAP), y = Y + i / COLS * (TH + GAP), w = TW;
+    int x = X + i % COLS * (TW + GAP), y = Y + i / COLS * (TH + GAP);
     const ZoneAlert* a = zoneAlert(i);
     bool wanted = zoneWanted(l, i, cfg.zones);
     uint16_t text = wanted ? C_TEXT : C_MUTED;
     if (a && wanted) {
-      d.fillRoundRect(x, y, w, TH, 5, levelColor(a->level));
+      chamfer(x, y, TW, TH, 4, levelColor(a->level), true);
       text = onColor(levelColor(a->level));
     } else {
-      d.fillRoundRect(x, y, w, TH, 5, C_PANEL);
-      if (a) d.drawRoundRect(x, y, w, TH, 5, levelColor(a->level));
-      else if (wanted) d.drawRoundRect(x, y, w, TH, 5, C_LINE);
+      chamfer(x, y, TW, TH, 4, C_PANEL, true);
+      chamfer(x, y, TW, TH, 4, a ? levelColor(a->level) : wanted ? C_ORANGE : C_DIM, false);
     }
     d.setFont(&fonts::Font2);
-    if (d.textWidth(l.zones[i].label) > w - 4) d.setFont(&fonts::Font0);  // BILOTSERK and the like
-    d.setTextDatum(middle_center);
-    d.setTextColor(text);
-    d.drawString(l.zones[i].label, x + w / 2, y + TH / 2);
+    drawText(l.zones[i].label, x + TW / 2, y + TH / 2, middle_center, text, d.textWidth(l.zones[i].label) > TW - 6 ? (const lgfx::IFont*)&fonts::Font0 : &fonts::Font2);
   }
   char line[20];
-  snprintf(line, sizeof line, feed.count == 1 ? "1 active" : "%d active", feed.count);
-  drawSmall(line, X + l.count % COLS * (TW + GAP) + TW / 2, Y + l.count / COLS * (TH + GAP) + TH / 2, middle_center,
-            feed.count ? C_AMBER : C_MUTED);
+  snprintf(line, sizeof line, "%d ACTIVE", feed.count);
+  int x = X + l.count % COLS * (TW + GAP), y = Y + l.count / COLS * (TH + GAP);
+  drawText(line, x + TW / 2, y + TH / 2, middle_center, feed.count ? C_YELLOW : C_DIM);
+}
+
+int autoScroll(int count, int perScreen) {  // lists turn their own pages: M5 stays the menu button everywhere
+  return count > perScreen ? (int)(millis() / 3000 % ((count + perScreen - 1) / perScreen)) * perScreen : 0;
 }
 
 void drawDetails(Link link, long long now) {
   auto& d = canvas;
-  drawHeader(linkDot(link));
+  drawHeader("ACTIVE", 3, link);
+  drawPageFooter();
   const ZoneAlert* shown[MAX_ZONES];
   int count = 0;
   for (int i = 0; i < feed.count; i++)
     if (zoneMatters(feed.zones[i], feed.list, cfg.zones)) shown[count++] = &feed.zones[i];
   if (!count) {
-    drawFitted("No active alerts", 72, C_MUTED);
+    brackets(20, 30, d.width() - 40, 70, C_DIM);
+    drawFitted("NO THREATS", 58, C_GREEN, 180);
+    drawText("in the zones you watch", d.width() / 2, 82, middle_center, C_MUTED);
     return;
   }
-  int first = count > 3 ? scrollPos % count : 0;
+  int first = autoScroll(count, 3);
   for (int r = 0; r < 3 && first + r < count; r++) {
     const ZoneAlert& z = *shown[first + r];
-    int y = 24 + r * 37;
-    d.fillRoundRect(3, y, 5, 33, 2, levelColor(z.level));
-    drawClipped(z.name, 13, y + 8, 120, C_TEXT);
+    int y = 20 + r * 33;
+    chamfer(3, y, d.width() - 6, 31, 5, C_PANEL, true);
+    d.fillRect(3, y + 5, 4, 21, levelColor(z.level));
+    drawClipped(z.name, 12, y + 9, 140, C_TEXT);
     char timer[16] = "";
     if (z.since && timeIsSynced(now)) formatTimer(now - z.since, timer, sizeof timer);
-    drawSmall(timer, d.width() - 5, y + 8, middle_right, C_TEXT);
-    char line[80];
-    if (z.conf) snprintf(line, sizeof line, "%s%s%d%%%s%s", z.threats, z.threats[0] ? "  " : "", z.conf, z.direction[0] ? "  to " : "", z.direction);
-    else snprintf(line, sizeof line, "%s", z.threats[0] ? z.threats : "Threat not specified");
-    drawClipped(line, 13, y + 25, d.width() - 18, C_MUTED);
+    drawText(timer, d.width() - 8, y + 9, middle_right, levelColor(z.level));
+    drawClipped(z.threats[0] ? z.threats : "threat not specified", 12, y + 23, d.width() - 22, C_MUTED);
   }
 }
 
 void drawHistory(Link link, long long now) {
   auto& d = canvas;
-  drawHeader(linkDot(link));
+  drawHeader("HISTORY", 4, link);
+  drawPageFooter();
   if (!historyLoaded || !history.eventCount) {
-    drawFitted(historyFailed ? "Not available" : historyLoaded ? "No events yet" : "Loading...", 72, C_MUTED);
+    drawFitted(historyFailed ? "NO DATA" : historyLoaded ? "NO EVENTS" : "LOADING", 68, C_DIM);
     return;
   }
   const int ROWS = 5;
-  int first = history.eventCount > ROWS ? scrollPos * ROWS % history.eventCount : 0;
+  int first = autoScroll(history.eventCount, ROWS);
   struct tm today {}, local {};
   time_t raw = now;
   localtime_r(&raw, &today);
   for (int r = 0; r < ROWS && first + r < history.eventCount; r++) {
     const HistoryEvent& e = history.events[first + r];
-    int y = 34 + r * 21;
+    int y = 28 + r * 20;
     raw = e.ts;
     localtime_r(&raw, &local);
     char when[14];
     strftime(when, sizeof when, local.tm_yday == today.tm_yday ? "%H:%M" : "%d.%m %H:%M", &local);
-    d.fillCircle(8, y, 4, levelColor(e.level));
-    drawClipped(when, 17, y, 80, C_MUTED);
-    drawClipped(e.zone, 97, y, 140, C_TEXT);
+    d.fillRect(4, y - 4, 8, 8, levelColor(e.level));
+    drawClipped(when, 17, y, 80, C_ORANGE);
+    drawClipped(e.zone, 97, y, 140, e.level == L_NONE ? C_MUTED : C_TEXT);
+    d.drawFastHLine(17, y + 10, d.width() - 21, C_SCAN);
   }
 }
 
 void drawStats(Link link) {
   auto& d = canvas;
-  drawHeader(linkDot(link));
+  drawHeader("STATS", 5, link);
+  drawPageFooter();
   if (!historyLoaded || !history.statCount) {
-    drawFitted(historyFailed ? "Not available" : historyLoaded ? "No alerts this week" : "Loading...", 72, C_MUTED);
+    drawFitted(historyFailed ? "NO DATA" : historyLoaded ? "QUIET WEEK" : "LOADING", 68, historyLoaded && !historyFailed ? C_GREEN : C_DIM);
     return;
   }
-  int first = history.statCount > 3 ? scrollPos % history.statCount : 0;
+  int first = autoScroll(history.statCount, 3);
   for (int r = 0; r < 3 && first + r < history.statCount; r++) {
     const ZoneStats& s = history.stats[first + r];
-    int y = 24 + r * 37;
-    d.fillRoundRect(3, y, d.width() - 6, 34, 5, C_PANEL);
+    int y = 20 + r * 33;
+    chamfer(3, y, d.width() - 6, 31, 5, C_PANEL, true);
     drawClipped(s.zone, 9, y + 9, 224, C_TEXT);
     char a[12], b[12], line[32];
     formatMinutes(s.todayMin, a, sizeof a);
-    snprintf(line, sizeof line, "Today %d, %s", s.todayCount, a);
-    drawClipped(line, 9, y + 25, 112, C_MUTED);
+    snprintf(line, sizeof line, "TODAY %d / %s", s.todayCount, a);
+    drawClipped(line, 9, y + 23, 112, C_ORANGE);
     formatMinutes(s.weekMin, b, sizeof b);
-    snprintf(line, sizeof line, "Week %d, %s", s.weekCount, b);
-    drawClipped(line, 123, y + 25, 112, C_MUTED);
+    snprintf(line, sizeof line, "WEEK %d / %s", s.weekCount, b);
+    drawClipped(line, 123, y + 23, 112, C_MUTED);
+  }
+}
+
+void drawSystem(Link link, long long now) {
+  auto& d = canvas;
+  drawHeader("SYSTEM", 6, link);
+  drawPageFooter();
+  char rows[6][2][40];
+  snprintf(rows[0][0], 40, "NET");
+  if (WiFi.isConnected()) snprintf(rows[0][1], 40, "%.20s %d dBm", WiFi.SSID().c_str(), WiFi.RSSI());
+  else snprintf(rows[0][1], 40, "offline");
+  snprintf(rows[1][0], 40, "LINK");
+  snprintf(rows[1][1], 40, "%s", link == LINK_OK ? "nominal" : link == LINK_WAIT ? "connecting" : linkTitle(link));
+  snprintf(rows[2][0], 40, "OBLAST");
+  snprintf(rows[2][1], 40, "%s", cfg.oblastName);
+  snprintf(rows[3][0], 40, "DELAY");
+  if (lastDelay >= 0) snprintf(rows[3][1], 40, "%ld s, last alert", lastDelay);
+  else snprintf(rows[3][1], 40, "not measured yet");
+  snprintf(rows[4][0], 40, "POWER");
+  snprintf(rows[4][1], 40, "%d.%02d V %s%s", batteryMv / 1000, batteryMv % 1000 / 10, usb ? "usb" : "battery", saverNow ? ", saver" : "");
+  snprintf(rows[5][0], 40, "FIRMWARE");
+  snprintf(rows[5][1], 40, "%s, up %lum", VERSION, millis() / 60000);
+  for (int r = 0; r < 6; r++) {
+    int y = 26 + r * 16;
+    drawText(rows[r][0], 6, y, middle_left, C_ORANGE);
+    drawClipped(rows[r][1], 76, y, d.width() - 80, r == 1 && link != LINK_OK ? C_YELLOW : C_TEXT);
   }
 }
 
@@ -880,72 +1030,79 @@ void menuText(int item, char* left, char* right, size_t size) {
       if (updatePercent >= 0) snprintf(right, size, "%d%%", updatePercent);
       else snprintf(right, size, "%s", *updateStatus ? updateStatus : VERSION);
       break;
-    case MI_DELAY:
-      snprintf(left, size, "Last delay");
-      if (lastDelay >= 0) snprintf(right, size, "%ld s", lastDelay);
-      else snprintf(right, size, "Not yet");
-      break;
-    case MI_NETWORK:
-      snprintf(left, size, "Network");
-      if (WiFi.isConnected()) snprintf(right, size, "%.12s %d", WiFi.SSID().c_str(), WiFi.RSSI());
-      else snprintf(right, size, "None");
-      break;
-    default: snprintf(left, size, "Back"); break;
+    default: left[0] = 0; break;
   }
 }
 
 void drawRow(int r, const char* left, const char* right, bool selected) {
-  auto& d = canvas;
-  int y = 24 + r * 22;
-  if (selected) d.fillRoundRect(3, y, d.width() - 6, 21, 5, C_BLUE);
+  int y = 20 + r * 20;
+  if (selected) chamfer(2, y, canvas.width() - 4, 19, 5, C_ORANGE, true);
   uint16_t text = selected ? C_BLACK : C_TEXT;
-  drawClipped(left, 10, y + 10, 140, text);
-  drawSmall(right, d.width() - 10, y + 10, middle_right, selected ? C_BLACK : C_MUTED);
+  drawClipped(left, 10, y + 10, 130, text);
+  drawText(right, canvas.width() - 9, y + 10, middle_right, selected ? C_BLACK : C_ORANGE);
 }
 
-void drawSettings(Link link) {
-  drawHeader(linkDot(link));
-  const int ROWS = menu == M_NONE ? 4 : 5;  // closed, the last row tells how to open it
-  int count = menu == M_ZONES ? feed.list.count + 1 : menu == M_REGIONS ? regions.count + 1 : MI_COUNT;
+void drawMenu(Link link) {
+  const int ROWS = 5;
+  int count = menu == M_ZONES ? feed.list.count : menu == M_REGIONS ? regions.count : MI_COUNT;
+  drawHeader(menu == M_ZONES ? "ZONES" : menu == M_REGIONS ? "OBLAST" : "MENU", menuIndex + 1, link);
+  const char* ok = menu == M_ZONES ? "TOGGLE" : menu == M_REGIONS ? "CHOOSE" : "SET";
+  if (menu == M_MAIN && (menuIndex == MI_REGION || menuIndex == MI_ZONES)) ok = "OPEN";
+  if (menu == M_MAIN && (menuIndex == MI_TEST || menuIndex == MI_SETUP || menuIndex == MI_UPDATE)) ok = "RUN";
+  drawFooter("NEXT", "BACK", ok);
+  if (!count) {
+    drawFitted("LOADING", 68, C_DIM);
+    return;
+  }
   int top = menuIndex < ROWS ? 0 : menuIndex - ROWS + 1;
   char left[32], right[32];
   for (int r = 0; r < ROWS && top + r < count; r++) {
     int i = top + r;
-    if (i == count - 1 && (menu == M_ZONES || menu == M_REGIONS)) {
-      drawRow(r, "Back", "", i == menuIndex);
-    } else if (menu == M_ZONES) {
-      drawRow(r, feed.list.zones[i].name, cfg.zones & (1u << i) ? "On" : "Off", i == menuIndex);
+    if (menu == M_ZONES) {
+      drawRow(r, feed.list.zones[i].name, cfg.zones & (1u << i) ? "[x]" : "[ ]", i == menuIndex);
     } else if (menu == M_REGIONS) {
-      drawRow(r, regions.regions[i].name, strcmp(regions.regions[i].id, cfg.oblast) ? "" : "On", i == menuIndex);
+      drawRow(r, regions.regions[i].name, strcmp(regions.regions[i].id, cfg.oblast) ? "" : "<<", i == menuIndex);
     } else {
       menuText(i, left, right, sizeof left);
-      drawRow(r, left, right, menu == M_MAIN && i == menuIndex);
+      drawRow(r, left, right, i == menuIndex);
     }
   }
-  if (menu == M_NONE) drawSmall("press A to open", canvas.width() / 2, 123, middle_center, C_BLUE);
+  // where in the list: a thin bar on the right edge
+  int h = (FOOT_Y - 22) * min(count, ROWS) / count;
+  canvas.fillRect(canvas.width() - 2, 20 + (FOOT_Y - 22 - h) * top / max(1, count - ROWS), 2, h, C_ORANGE);
 }
 
 void drawPortal() {
   auto& d = canvas;
-  d.fillScreen(C_WHITE);
+  scanlines();
   bool joined = WiFi.softAPgetStationNum() > 0;
+  d.fillRect(0, 0, 135, 135, C_WHITE);  // a QR code needs a light background to scan
   d.qrcode(joined ? "http://192.168.4.1/" : apQr.c_str(), 4, 4, 127, 4);
-  int x = 136;
-  d.setFont(&fonts::Font2);
-  d.setTextDatum(top_left);
-  d.setTextColor(C_BLACK);
+  int x = 142;
+  drawText("SETUP", x, 10, middle_left, C_ORANGE);
+  d.drawFastHLine(x, 19, 94, C_DIM);
   if (joined) {
-    d.drawString("Phone joined", x, 8);
-    d.drawString("Scan to open", x, 30);
-    d.drawString("or browse to", x, 52);
-    d.drawString("192.168.4.1", x, 70);
+    drawText("phone joined", x, 32, middle_left, C_GREEN);
+    drawText("scan again or", x, 54, middle_left, C_TEXT);
+    drawText("open", x, 70, middle_left, C_TEXT);
+    drawText("192.168.4.1", x, 86, middle_left, C_ORANGE);
   } else {
-    d.drawString("Scan with", x, 8);
-    d.drawString("the Camera", x, 26);
-    d.drawString(AP_NAME, x, 52);
-    d.drawString(apPass, x, 70);
+    drawText("scan with", x, 32, middle_left, C_TEXT);
+    drawText("the camera", x, 48, middle_left, C_TEXT);
+    drawText(AP_NAME, x, 70, middle_left, C_ORANGE);
+    drawText(apPass.c_str(), x, 86, middle_left, C_MUTED);
   }
-  d.drawString("A: close", x, 112);
+  chamfer(x, 111, 92, 18, 4, C_ORANGE, true);
+  drawText("M5 / BACK: EXIT", x + 46, 120, middle_center, C_BLACK, &fonts::Font0);
+}
+
+void drawClear() {
+  auto& d = canvas;
+  scanlines();
+  brackets(6, 8, d.width() - 12, d.height() - 16, C_GREEN);
+  chamfer(20, 34, d.width() - 40, 44, 8, C_GREEN, true);
+  drawFitted("ALL CLEAR", 56, C_BLACK, 190);
+  drawText("THREAT ENDED // STAND DOWN", d.width() / 2, 96, middle_center, C_GREEN);
 }
 
 void render(Sound sound, Link link, long long now, unsigned long t) {
@@ -962,35 +1119,36 @@ void render(Sound sound, Link link, long long now, unsigned long t) {
   static uint8_t brightness = 1;
   if (screenOff) wanted = 0;
   if (wanted != brightness) M5.Display.setBrightness(brightness = wanted);
-  if (screenOff || (!alarm && t - lastDraw < DRAW_MS)) return;
+  // The ticker and the glitch move; in saver mode the screen stays still to spare the battery.
+  unsigned long every = due(glitchUntil, t) ? 40 : saverNow ? DRAW_SAVER_MS : DRAW_MS;
+  if (screenOff || (!alarm && t - lastDraw < every)) return;
   lastDraw = t;
 
   char timer[16] = "";
   if (testing) {
-    drawAlarm("ALARM TEST", "This is a test", "", "press any button to stop", C_RED, on);
+    drawAlarm("ALARM TEST", "This is a test", "", C_RED, on);
   } else if (sound == S_LINK) {
-    drawAlarm(linkTitle(link), "Alerts may be missed", "", "press any button to silence", C_ORANGE, on);
+    drawAlarm(linkTitle(link), "Alerts may be missed", "", C_YELLOW, on);
   } else if (alarm) {
     if (view.since && timeIsSynced(now)) formatTimer(now - view.since, timer, sizeof timer);
-    drawAlarm(viewTitle(view), view.zone[0] ? view.zone : cfg.oblastName, view.threats[0] ? view.threats : timer,
-              "press any button to silence", levelColor(view.level), on);
+    drawAlarm(viewTitle(view), view.zone[0] ? view.zone : cfg.oblastName, view.threats[0] ? view.threats : timer, levelColor(view.level), on);
   } else if (portalOn) {
     drawPortal();
   } else if (clearing) {
-    canvas.fillScreen(C_DEEP_GREEN);
-    drawBattery(canvas.width() - 6, 5, C_WHITE);
-    drawFitted("ALL CLEAR", 60, C_WHITE);
-    drawSmall("The alert is over", canvas.width() / 2, 90, top_center, C_WHITE);
+    drawClear();
+  } else if (menu != M_NONE) {
+    drawMenu(link);
   } else {
     switch (page) {
       case P_MAP: drawMap(link); break;
       case P_DETAILS: drawDetails(link, now); break;
       case P_HISTORY: drawHistory(link, now); break;
       case P_STATS: drawStats(link); break;
-      case P_SETTINGS: drawSettings(link); break;
+      case P_SYSTEM: drawSystem(link, now); break;
       default: drawHome(link, now); break;
     }
   }
+  if (!alarm) drawGlitch(t);
   canvas.pushSprite(0, 0);
 }
 
@@ -1038,6 +1196,8 @@ bool playSound(Sound s, unsigned long t) {
 }
 
 // ---------- input ----------
+// The right side button (on top when M5 is to the right of the screen) goes forward, power (at the bottom) goes back,
+// M5 opens the menu and chooses. The footer of every screen says so.
 
 void activateMenuItem(unsigned long t) {
   switch (menuIndex) {
@@ -1059,47 +1219,46 @@ void activateMenuItem(unsigned long t) {
       break;
     case MI_TEST: testUntil = t + TEST_MS; break;
     case MI_SETUP: startPortal(); break;
-    case MI_BACK: menu = M_NONE; menuIndex = 0; break;
     default: break;
   }
 }
 
-void handleButtons(bool a, bool b, bool c, unsigned long t) {
+void goBack() {
+  if (menu == M_ZONES || menu == M_REGIONS) {
+    menuIndex = menu == M_ZONES ? MI_ZONES : MI_REGION;
+    menu = M_MAIN;
+  } else if (menu == M_MAIN) {
+    menu = M_NONE;
+  } else {
+    page = P_HOME;
+  }
+}
+
+void handleButtons(bool ok, bool next, bool back, unsigned long t) {
   if (portalOn) {
-    if (a) stopPortal();
+    if (ok || back) stopPortal();
     return;
   }
-  int move = b ? 1 : c ? -1 : 0;
-  if (menu == M_NONE) {
-    if (move) {
-      page = (Page)stepIndex(page, PAGE_COUNT, move);
-      scrollPos = 0;
-    } else if (a) {
-      if (page == P_SETTINGS) {
-        menu = M_MAIN;
-        menuIndex = 0;
-      } else {
-        scrollPos++;
-      }
-    }
-  } else if (menu == M_MAIN) {
-    if (move) menuIndex = stepIndex(menuIndex, MI_COUNT, move);
-    else if (a) activateMenuItem(t);
+  Page wasPage = page;
+  Menu wasMenu = menu;
+  if (back) {
+    goBack();
+  } else if (menu == M_NONE) {
+    if (next) page = (Page)stepIndex(page, PAGE_COUNT, 1);
+    else if (ok) menu = M_MAIN, menuIndex = 0;
   } else {
-    int count = menu == M_ZONES ? feed.list.count : regions.count;  // then Back
-    if (move) {
-      menuIndex = stepIndex(menuIndex, count + 1, move);
-    } else if (a && menuIndex >= count) {
-      menuIndex = menu == M_ZONES ? MI_ZONES : MI_REGION;
-      menu = M_MAIN;
-    } else if (a && menu == M_REGIONS) {
+    int count = menu == M_ZONES ? feed.list.count : menu == M_REGIONS ? regions.count : MI_COUNT;
+    if (next) {
+      menuIndex = stepIndex(menuIndex, count, 1);
+    } else if (ok && menu == M_MAIN) {
+      activateMenuItem(t);
+    } else if (ok && menu == M_REGIONS && menuIndex < count) {
       chooseOblast(regions.regions[menuIndex]);
-      menu = M_MAIN;
-      menuIndex = MI_REGION;
-    } else if (a) {
-      unsigned next = cfg.zones ^ (1u << menuIndex);
-      if (watchedCount(feed.list, next)) {  // at least one zone stays: a stick that watches nothing would look fine and never ring
-        cfg.zones = next;
+      goBack();
+    } else if (ok && menu == M_ZONES && menuIndex < count) {
+      unsigned bit = cfg.zones ^ (1u << menuIndex);
+      if (watchedCount(feed.list, bit)) {  // at least one zone stays: a stick that watches nothing would look fine and never ring
+        cfg.zones = bit;
         saveSettings();
         historyLoaded = false;
       } else {
@@ -1107,6 +1266,7 @@ void handleButtons(bool a, bool b, bool c, unsigned long t) {
       }
     }
   }
+  if (page != wasPage || menu != wasMenu) glitch(t);
   lastDraw = 0;
 }
 
@@ -1288,7 +1448,6 @@ void loop() {
   if (!portalOn && !isAlarm(sound) && t - lastInput >= BACK_HOME_MS && (page != P_HOME || menu != M_NONE)) {
     page = P_HOME;
     menu = M_NONE;
-    scrollPos = 0;
     lastDraw = 0;
   }
 
